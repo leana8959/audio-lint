@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 metaflac = "0.2.5"
+regex = "1.7.1"

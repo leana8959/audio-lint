@@ -4,6 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use metaflac;
+use regex::Regex;
 
 /// Read files from given path, recursively.
 fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
@@ -42,7 +43,11 @@ fn normalize_year(paths: &Vec<PathBuf>) {
             return
         };
 
-        let new_date = "test";
+        let re = Regex::new(r"(\d{4})").unwrap();
+        let Some(caps) = re.captures(old_date) else {
+            return 
+        };
+        let new_date = caps.get(1).map_or(old_date.clone(), |s| s.as_str().to_owned());
         comments.set("DATE", vec![new_date]);
 
         tag.save().unwrap();
