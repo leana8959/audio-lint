@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use metaflac;
 use regex::Regex;
+use clap::Parser;
 
 /// Read files from given path, recursively.
 fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
@@ -76,9 +77,35 @@ fn normalize_tracknumber(paths: &Vec<PathBuf>) {
     });
 }
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = "None")]
+struct Args {
+    #[arg(long, help = "save changes to disk")]
+    run: bool, 
+    
+    #[arg(short = 't', long = "normalize-tracknumber", help = "remove padding zeros in track numbers")]
+    normalize_tracknumber: bool,
+    
+    #[arg(short = 'y', long = "normalize-year", help = "format release year to be four digits")]
+    normalize_year: bool,
+
+
+}
+
 fn main() {
     let path = Path::new("./test/");
     let paths = dbg!(read_files(path).unwrap());
     // normalize_tracknumber(&paths);
-    normalize_year(&paths);
+    // normalize_year(&paths);
+
+    let args = Args::parse();
+
+    if args.normalize_tracknumber {
+        normalize_tracknumber(&paths);
+    }
+
+    if args.normalize_year {
+       normalize_year(&paths);
+    }
+    
 }
