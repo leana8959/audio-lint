@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -11,11 +12,11 @@ fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
 
         for entry in fs::read_dir(path)? {
             let entry = entry?;
-            if !entry.metadata()?.is_dir() {
-                walked.push(entry);
-            } else {
+            if entry.metadata()?.is_dir() {
                 let mut sub_entries = get_entries(entry.path().as_path())?;
                 walked.append(&mut sub_entries);
+            } else if entry.path().extension() == Some(&OsString::from("flac")) {
+                walked.push(entry);
             }
         }
 
