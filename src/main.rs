@@ -31,13 +31,20 @@ fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
 
 fn normalize_tracknumber(paths: &Vec<PathBuf>) {
     paths.iter().for_each(|path| {
-        let mut tag = metaflac::Tag::read_from_path(path).unwrap();
-
+        let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
+            return
+        };
         let comments = tag.vorbis_comments_mut();
+        let Some(old_number_vec) = comments.get("TRACKNUMBER") else {
+            return
+        };
+        let Some(old_number) = old_number_vec.iter().next() else  {
+            return
+        };
+        let Ok(new_number) = old_number.parse::<u32>() else {
+            return
+        };
 
-        let old_number = dbg!(comments.get("TRACKNUMBER").unwrap().iter().next().unwrap()).parse::<u32>().unwrap();
-
-        let new_number = old_number + 1;
         comments.set_track(new_number);
 
         tag.save().unwrap();
