@@ -1,21 +1,31 @@
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-fn read_files(path: &Path) -> Result<Vec<fs::DirEntry>, io::Error> {
-    let mut walked: Vec<fs::DirEntry> = Vec::new();
+use metaflac::Tag;
 
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        if !entry.metadata()?.is_dir() {
-            walked.push(entry);
-        } else {
-            let mut sub_entries = read_files(entry.path().as_path())?;
-            walked.append(&mut sub_entries);
+/// Read files from given path, recursively.
+fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
+    fn get_entries(path: &Path) -> Result<Vec<fs::DirEntry>, io::Error> {
+        let mut walked: Vec<fs::DirEntry> = Vec::new();
+
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            if !entry.metadata()?.is_dir() {
+                walked.push(entry);
+            } else {
+                let mut sub_entries = get_entries(entry.path().as_path())?;
+                walked.append(&mut sub_entries);
+            }
         }
+
+        Ok(walked)
     }
 
-    Ok(walked)
+    get_entries(&path)?
+        .iter()
+        .map(|entry| Ok(entry.path()))
+        .collect()
 }
 
 fn main() {
