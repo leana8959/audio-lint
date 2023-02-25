@@ -1,19 +1,21 @@
 use std::fs;
+use std::io;
 use std::path::Path;
 
-fn read_files(path: &Path) -> Vec<fs::DirEntry> {
+fn read_files(path: &Path) -> Result<Vec<fs::DirEntry>, io::Error> {
     let mut walked: Vec<fs::DirEntry> = Vec::new();
-    for entry in fs::read_dir(path).unwrap() {
-        let entry = entry.unwrap();
-        if !entry.metadata().unwrap().is_dir() {
+
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        if !entry.metadata()?.is_dir() {
             walked.push(entry);
         } else {
-            let mut subs = read_files(entry.path().as_path());
-            walked.append(&mut subs);
+            let mut sub_entries = read_files(entry.path().as_path())?;
+            walked.append(&mut sub_entries);
         }
     }
 
-    walked
+    Ok(walked)
 }
 
 fn main() {
