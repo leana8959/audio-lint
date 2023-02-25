@@ -3,7 +3,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use metaflac::Tag;
+use metaflac;
 
 /// Read files from given path, recursively.
 fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
@@ -29,7 +29,33 @@ fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
         .collect()
 }
 
+fn normalize_tracknumber(paths: &Vec<PathBuf>) {
+    paths.iter().for_each(|path| {
+        let mut tag = metaflac::Tag::read_from_path(path).unwrap();
+
+        let comments = tag.vorbis_comments_mut();
+
+        let old_number = dbg!(comments.get("TRACKNUMBER").unwrap().iter().next().unwrap()).parse::<u32>().unwrap();
+
+        let new_number = old_number + 1;
+        comments.set_track(new_number);
+
+        tag.save().unwrap();
+    });
+}
+
 fn main() {
-    let path = Path::new("./test");
-    dbg!(read_files(&path));
+    let path = Path::new("./test/");
+    // dbg!(read_files(&path));
+
+    // let mut tag = Tag::read_from_path("./test/nested/04 - Exit Music (for a Film).flac").unwrap();
+
+    // let comments = dbg!(tag.vorbis_comments().unwrap());
+    // tag.set_vorbis("ARTIST", vec!["My Favorite Band is Radiohead"]);
+    //
+    // let _ = dbg!(tag.vorbis_comments().unwrap());
+    // tag.save().unwrap();
+
+    let paths = dbg!(read_files(path).unwrap());
+    normalize_tracknumber(&paths);
 }
