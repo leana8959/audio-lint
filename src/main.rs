@@ -32,11 +32,65 @@ fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
         .collect()
 }
 
+/// Rename file based on metadata
+fn rename(paths: &mut Vec<PathBuf>) -> Vec<String> {
+    let mut messages: Vec<String> = Vec::new();
+
+    for (idx, path) in paths.clone().iter().enumerate() {
+        let old_name = path
+            .file_name()
+            .expect("Path should be a file")
+            .to_str()
+            .unwrap();
+        let ext = path
+            .extension()
+            .expect("Should have a vaild extension")
+            .to_str()
+            .unwrap();
+
+        let parent = path.parent().expect("Parent folder should be vaild");
+
+        let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
+            messages.push(format!("{}", old_name.red()));
+            continue;
+        };
+        let comments = tag.vorbis_comments_mut();
+        let Some(tracknumber_vec) = comments.get("TRACKNUMBER") else {
+            messages.push(format!("{}", old_name.red()));
+            continue;
+        };
+        let Some(tracknumber) = tracknumber_vec.iter().next() else  {
+            messages.push(format!("{}", old_name.red()));
+            continue;
+        };
+        let Some(title_vec) = comments.get("TITLE") else {
+            messages.push(format!("{}", old_name.red()));
+            continue;
+        };
+        let Some(title) = title_vec.iter().next() else  {
+            messages.push(format!("{}", old_name.red()));
+            continue;
+        };
+
+        let new_path = parent.join(format!("{:0>2} - {}.{}", tracknumber, title, ext));
+
+        let Ok(_) = fs::rename(path, &new_path) else {
+            messages.push(format!("{}", old_name.red()));
+            continue;
+        };
+
+        paths[idx] = new_path.clone();
+        messages.push(format!("{}", &new_path.to_str().unwrap().green()));
+    }
+
+    return messages;
+}
+
 /// Normalize year attibute for a given vector of paths to flac files
 fn normalize_year(paths: &Vec<PathBuf>) -> Vec<String> {
     let mut messages: Vec<String> = Vec::new();
 
-    for path in paths {
+    for path in paths.iter() {
         let name = path
             .file_name()
             .expect("Path should be a file")
@@ -79,7 +133,7 @@ fn normalize_year(paths: &Vec<PathBuf>) -> Vec<String> {
 /// Normalize tracknumber attribute for a vector of paths to flac files
 fn normalize_tracknumber(paths: &Vec<PathBuf>) -> Vec<String> {
     let mut messages: Vec<String> = Vec::new();
-    for path in paths {
+    for path in paths.iter() {
         let name = path
             .file_name()
             .expect("Path should be a file")
@@ -136,11 +190,14 @@ struct Args {
         help = "format release year to be four digits"
     )]
     normalize_year: bool,
+
+    #[arg(short = 'r', long = "rename", help = "rename files with metadata")]
+    rename: bool,
 }
 
 fn main() {
-    let path = Path::new("./test/");
-    let paths = read_files(path).expect("Please provide a correct path");
+    let root = Path::new("./test/");
+    let mut paths = read_files(root).expect("Please provide a correct path");
 
     let args = Args::parse();
     let quiet = args.quiet;
@@ -153,6 +210,12 @@ fn main() {
     if args.normalize_year {
         messages.append(&mut normalize_year(&paths));
     }
+
+    paths = dbg!(paths);
+    if args.rename {
+        messages.append(&mut rename(&mut paths))
+    }
+    dbg!(paths);
 
     if !quiet {
         println!("{}", messages.join("\n"));
