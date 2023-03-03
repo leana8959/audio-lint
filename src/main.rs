@@ -4,6 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
+use colored::Colorize;
 use metaflac;
 use regex::Regex;
 
@@ -31,6 +32,7 @@ fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
         .collect()
 }
 
+/// Normalize year attibute for a given vector of paths to flac files
 fn normalize_year(paths: &Vec<PathBuf>) -> Vec<String> {
     let mut messages: Vec<String> = Vec::new();
 
@@ -42,21 +44,21 @@ fn normalize_year(paths: &Vec<PathBuf>) -> Vec<String> {
             .unwrap();
 
         let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
-            messages.push(format!("Skipped {name}"));
+            messages.push(format!("{}", name.red()));
             continue;
         };
         let comments = tag.vorbis_comments_mut();
         let Some(old_date_vec) = comments.get("DATE") else {
-            messages.push(format!("Skipped {name}"));
+            messages.push(format!("{}", name.red()));
             continue;
         };
         let Some(old_date) = old_date_vec.iter().next() else  {
-            messages.push(format!("Skipped {name}"));
+            messages.push(format!("{}", name.red()));
             continue;
         };
         let re = Regex::new(r"(\d{4})").unwrap();
         let Some(caps) = re.captures(old_date) else {
-            messages.push(format!("Skipped {name}"));
+            messages.push(format!("{}", name.red()));
             continue;
         };
         let new_date = caps
@@ -65,15 +67,16 @@ fn normalize_year(paths: &Vec<PathBuf>) -> Vec<String> {
         comments.set("DATE", vec![new_date]);
 
         let Ok(_) = tag.save() else {
-            messages.push(format!("Skipped {name}"));
+            messages.push(format!("{}", name.red()));
             continue;
         };
-        messages.push(format!("Processed {name}"));
+        messages.push(format!("{}", name.green()));
     }
 
     return messages;
 }
 
+/// Normalize tracknumber attribute for a vector of paths to flac files
 fn normalize_tracknumber(paths: &Vec<PathBuf>) -> Vec<String> {
     let mut messages: Vec<String> = Vec::new();
     for path in paths {
@@ -84,29 +87,29 @@ fn normalize_tracknumber(paths: &Vec<PathBuf>) -> Vec<String> {
             .unwrap();
 
         let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
-            messages.push(format!("Skipped {name}"));
+            messages.push(format!("{}", name.red()));
 			continue;
         };
         let comments = tag.vorbis_comments_mut();
         let Some(old_number_vec) = comments.get("TRACKNUMBER") else {
-            messages.push(format!("Skipped {name}"));
+            messages.push(format!("{}", name.red()));
 			continue;
         };
         let Some(old_number) = old_number_vec.iter().next() else  {
-            messages.push(format!("Skipped {name}"));
+            messages.push(format!("{}", name.red()));
 			continue;
         };
         let Ok(new_number) = old_number.parse::<u32>() else {
-            messages.push(format!("Skipped {name}"));
+            messages.push(format!("{}", name.red()));
 			continue;
         };
         comments.set_track(new_number);
 
         let Ok(_)= tag.save() else {
-            messages.push(format!("Skipped {name}"));
+            messages.push(format!("{}", name.red()));
             continue;
         };
-        messages.push(format!("Processed {name}"))
+        messages.push(format!("{}", name.green()));
     }
     return messages;
 }
@@ -137,18 +140,21 @@ struct Args {
 
 fn main() {
     let path = Path::new("./test/");
-    let paths = dbg!(read_files(path).unwrap());
-    // normalize_tracknumber(&paths);
-    // normalize_year(&paths);
+    let paths = read_files(path).expect("Please provide a correct path");
 
     let args = Args::parse();
-    let quiet = dbg!(args.quiet);
+    let quiet = args.quiet;
+    let mut messages: Vec<String> = Vec::new();
 
     if args.normalize_tracknumber {
-        dbg!(normalize_tracknumber(&paths));
+        messages.append(&mut normalize_tracknumber(&paths));
     }
 
     if args.normalize_year {
-        dbg!(normalize_year(&paths));
+        messages.append(&mut normalize_year(&paths));
+    }
+
+    if !quiet {
+        println!("{}", messages.join("\n"));
     }
 }
