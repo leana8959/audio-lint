@@ -3,9 +3,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use clap::Parser;
 use metaflac;
 use regex::Regex;
-use clap::Parser;
 
 /// Read files from given path, recursively.
 fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
@@ -31,65 +31,108 @@ fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
         .collect()
 }
 
-fn normalize_year(paths: &Vec<PathBuf>) {
-    paths.iter().for_each(|path| {
+fn normalize_year(paths: &Vec<PathBuf>) -> Vec<String> {
+    let mut messages: Vec<String> = Vec::new();
+
+    for path in paths {
+        let name = path
+            .file_name()
+            .expect("Path should be a file")
+            .to_str()
+            .unwrap();
+
         let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
-            return
+            messages.push(format!("Skipped {name}"));
+            continue;
         };
         let comments = tag.vorbis_comments_mut();
         let Some(old_date_vec) = comments.get("DATE") else {
-            return
+            messages.push(format!("Skipped {name}"));
+            continue;
         };
         let Some(old_date) = old_date_vec.iter().next() else  {
-            return
+            messages.push(format!("Skipped {name}"));
+            continue;
         };
-
         let re = Regex::new(r"(\d{4})").unwrap();
         let Some(caps) = re.captures(old_date) else {
-            return 
+            messages.push(format!("Skipped {name}"));
+            continue;
         };
-        let new_date = caps.get(1).map_or(old_date.clone(), |s| s.as_str().to_owned());
+        let new_date = caps
+            .get(1)
+            .map_or(old_date.clone(), |s| s.as_str().to_owned());
         comments.set("DATE", vec![new_date]);
 
-        tag.save().unwrap();
-    });
+        let Ok(_) = tag.save() else {
+            messages.push(format!("Skipped {name}"));
+            continue;
+        };
+        messages.push(format!("Processed {name}"));
+    }
+
+    return messages;
 }
 
-fn normalize_tracknumber(paths: &Vec<PathBuf>) {
-    paths.iter().for_each(|path| {
+fn normalize_tracknumber(paths: &Vec<PathBuf>) -> Vec<String> {
+    let mut messages: Vec<String> = Vec::new();
+    for path in paths {
+        let name = path
+            .file_name()
+            .expect("Path should be a file")
+            .to_str()
+            .unwrap();
+
         let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
-            return
+            messages.push(format!("Skipped {name}"));
+			continue;
         };
         let comments = tag.vorbis_comments_mut();
         let Some(old_number_vec) = comments.get("TRACKNUMBER") else {
-            return
+            messages.push(format!("Skipped {name}"));
+			continue;
         };
         let Some(old_number) = old_number_vec.iter().next() else  {
-            return
+            messages.push(format!("Skipped {name}"));
+			continue;
         };
         let Ok(new_number) = old_number.parse::<u32>() else {
-            return
+            messages.push(format!("Skipped {name}"));
+			continue;
         };
-
         comments.set_track(new_number);
 
-        tag.save().unwrap();
-    });
+        let Ok(_)= tag.save() else {
+            messages.push(format!("Skipped {name}"));
+            continue;
+        };
+        messages.push(format!("Processed {name}"))
+    }
+    return messages;
 }
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = "None")]
 struct Args {
     #[arg(long, help = "save changes to disk")]
-    run: bool, 
-    
-    #[arg(short = 't', long = "normalize-tracknumber", help = "remove padding zeros in track numbers")]
+    run: bool,
+
+    #[arg(short, long, help = "show what changes will be / has been made")]
+    quiet: bool,
+
+    #[arg(
+        short = 't',
+        long = "normalize-tracknumber",
+        help = "remove padding zeros in track numbers"
+    )]
     normalize_tracknumber: bool,
-    
-    #[arg(short = 'y', long = "normalize-year", help = "format release year to be four digits")]
+
+    #[arg(
+        short = 'y',
+        long = "normalize-year",
+        help = "format release year to be four digits"
+    )]
     normalize_year: bool,
-
-
 }
 
 fn main() {
@@ -99,13 +142,13 @@ fn main() {
     // normalize_year(&paths);
 
     let args = Args::parse();
+    let quiet = dbg!(args.quiet);
 
     if args.normalize_tracknumber {
-        normalize_tracknumber(&paths);
+        dbg!(normalize_tracknumber(&paths));
     }
 
     if args.normalize_year {
-       normalize_year(&paths);
+        dbg!(normalize_year(&paths));
     }
-    
 }
