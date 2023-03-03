@@ -33,7 +33,7 @@ fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
 }
 
 /// Rename file based on metadata
-fn rename(paths: &mut Vec<PathBuf>) -> Vec<String> {
+fn rename(paths: &mut Vec<PathBuf>, run: bool) -> Vec<String> {
     let mut messages: Vec<String> = Vec::new();
 
     for (idx, path) in paths.clone().iter().enumerate() {
@@ -72,22 +72,26 @@ fn rename(paths: &mut Vec<PathBuf>) -> Vec<String> {
             continue;
         };
 
-        let new_path = parent.join(format!("{:0>2} - {}.{}", tracknumber, title, ext));
+        let new_name = format!("{:0>2} - {}.{}", tracknumber, title, ext);
+        let new_path = parent.join(&new_name);
 
-        let Ok(_) = fs::rename(path, &new_path) else {
-            messages.push(format!("{}", old_name.red()));
-            continue;
-        };
-
-        paths[idx] = new_path.clone();
-        messages.push(format!("{}", &new_path.to_str().unwrap().green()));
+        if run {
+            let Ok(_) = fs::rename(path, &new_path) else {
+                messages.push(format!("{}", old_name.red()));
+                continue;
+            };
+            paths[idx] = new_path.clone();
+            messages.push(format!("{}", &new_path.to_str().unwrap().green()));
+        } else {
+            messages.push(format!("{}{}", old_name.yellow(), new_name.yellow()));
+        }
     }
 
     return messages;
 }
 
 /// Normalize year attibute for a given vector of paths to flac files
-fn normalize_year(paths: &Vec<PathBuf>) -> Vec<String> {
+fn normalize_year(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
     let mut messages: Vec<String> = Vec::new();
 
     for path in paths.iter() {
@@ -120,18 +124,22 @@ fn normalize_year(paths: &Vec<PathBuf>) -> Vec<String> {
             .map_or(old_date.clone(), |s| s.as_str().to_owned());
         comments.set("DATE", vec![new_date]);
 
-        let Ok(_) = tag.save() else {
-            messages.push(format!("{}", name.red()));
-            continue;
-        };
-        messages.push(format!("{}", name.green()));
+        if run {
+            let Ok(_) = tag.save() else {
+                messages.push(format!("{}", name.red()));
+                continue;
+            };
+            messages.push(format!("{}", name.green()));
+        } else {
+            messages.push(format!("{}", name.yellow()));
+        }
     }
 
     return messages;
 }
 
 /// Normalize tracknumber attribute for a vector of paths to flac files
-fn normalize_tracknumber(paths: &Vec<PathBuf>) -> Vec<String> {
+fn normalize_tracknumber(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
     let mut messages: Vec<String> = Vec::new();
     for path in paths.iter() {
         let name = path
@@ -159,11 +167,15 @@ fn normalize_tracknumber(paths: &Vec<PathBuf>) -> Vec<String> {
         };
         comments.set_track(new_number);
 
-        let Ok(_)= tag.save() else {
-            messages.push(format!("{}", name.red()));
-            continue;
-        };
-        messages.push(format!("{}", name.green()));
+        if run {
+            let Ok(_) = tag.save() else {
+                messages.push(format!("{}", name.red()));
+                continue;
+            };
+            messages.push(format!("{}", name.green()));
+        } else {
+            messages.push(format!("{}", name.yellow()));
+        }
     }
     return messages;
 }
@@ -201,19 +213,21 @@ fn main() {
 
     let args = Args::parse();
     let quiet = args.quiet;
+    let run = args.run;
+
     let mut messages: Vec<String> = Vec::new();
 
     if args.normalize_tracknumber {
-        messages.append(&mut normalize_tracknumber(&paths));
+        messages.append(&mut normalize_tracknumber(&paths, run));
     }
 
     if args.normalize_year {
-        messages.append(&mut normalize_year(&paths));
+        messages.append(&mut normalize_year(&paths, run));
     }
 
     paths = dbg!(paths);
     if args.rename {
-        messages.append(&mut rename(&mut paths))
+        messages.append(&mut rename(&mut paths, run))
     }
     dbg!(paths);
 
