@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use clap::Parser;
 use colored::Colorize;
 use metaflac;
+use rayon::prelude::IntoParallelRefIterator;
+use rayon::prelude::ParallelIterator;
 use regex::Regex;
 
 /// Read files from given path, recursively.
@@ -81,9 +83,9 @@ fn rename(paths: &mut Vec<PathBuf>, run: bool) -> Vec<String> {
                 continue;
             };
             paths[idx] = new_path.clone();
-            messages.push(format!("{}", &new_path.to_str().unwrap().green()));
+            messages.push(format!("{} ->\n{}", old_name, new_name.green()));
         } else {
-            messages.push(format!("{}{}", old_name.yellow(), new_name.yellow()));
+            messages.push(format!("{} ->\n{}", old_name.yellow(), new_name.yellow()));
         }
     }
 
@@ -92,92 +94,99 @@ fn rename(paths: &mut Vec<PathBuf>, run: bool) -> Vec<String> {
 
 /// Normalize year attibute for a given vector of paths to flac files
 fn normalize_year(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
-    let mut messages: Vec<String> = Vec::new();
+    paths
+        .par_iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .expect("Path should be a file")
+                .to_str()
+                .unwrap();
 
-    for path in paths.iter() {
-        let name = path
-            .file_name()
-            .expect("Path should be a file")
-            .to_str()
-            .unwrap();
-
-        let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
-            messages.push(format!("{}", name.red()));
-            continue;
-        };
-        let comments = tag.vorbis_comments_mut();
-        let Some(old_date_vec) = comments.get("DATE") else {
-            messages.push(format!("{}", name.red()));
-            continue;
-        };
-        let Some(old_date) = old_date_vec.iter().next() else  {
-            messages.push(format!("{}", name.red()));
-            continue;
-        };
-        let re = Regex::new(r"(\d{4})").unwrap();
-        let Some(caps) = re.captures(old_date) else {
-            messages.push(format!("{}", name.red()));
-            continue;
-        };
-        let new_date = caps
-            .get(1)
-            .map_or(old_date.clone(), |s| s.as_str().to_owned());
-        comments.set("DATE", vec![new_date]);
-
-        if run {
-            let Ok(_) = tag.save() else {
-                messages.push(format!("{}", name.red()));
-                continue;
+            let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
+                return format!("{}", name.red());
             };
-            messages.push(format!("{}", name.green()));
-        } else {
-            messages.push(format!("{}", name.yellow()));
-        }
-    }
+            let comments = tag.vorbis_comments_mut();
+            let Some(old_date_vec) = comments.get("DATE") else {
+                return format!("{}", name.red());
+            };
+            let Some(old_date) = old_date_vec.iter().next() else  {
+                return format!("{}", name.red());
+            };
+            let re = Regex::new(r"(\d{4})").unwrap();
+            let Some(caps) = re.captures(old_date) else {
+                return format!("{}", name.red());
+            };
+            let new_date = caps
+                .get(1)
+                .map_or(old_date.clone(), |s| s.as_str().to_owned());
 
-    return messages;
+            if !run {
+                return format!(
+                    "{} :\n{}\t{}",
+                    name,
+                    old_date,
+                    new_date.to_string().yellow()
+                );
+            }
+
+            let result = format!("{} :\n{}\t{}", name, old_date, new_date.to_string().green());
+            comments.set("DATE", vec![new_date]);
+            let Ok(_) = tag.save() else {
+                return format!("{}", name.red());
+            };
+            return result;
+        })
+        .collect::<Vec<String>>()
 }
 
 /// Normalize tracknumber attribute for a vector of paths to flac files
 fn normalize_tracknumber(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
-    let mut messages: Vec<String> = Vec::new();
-    for path in paths.iter() {
-        let name = path
-            .file_name()
-            .expect("Path should be a file")
-            .to_str()
-            .unwrap();
+    paths
+        .par_iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .expect("Path should be a file")
+                .to_str()
+                .unwrap();
 
-        let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
-            messages.push(format!("{}", name.red()));
-			continue;
-        };
-        let comments = tag.vorbis_comments_mut();
-        let Some(old_number_vec) = comments.get("TRACKNUMBER") else {
-            messages.push(format!("{}", name.red()));
-			continue;
-        };
-        let Some(old_number) = old_number_vec.iter().next() else  {
-            messages.push(format!("{}", name.red()));
-			continue;
-        };
-        let Ok(new_number) = old_number.parse::<u32>() else {
-            messages.push(format!("{}", name.red()));
-			continue;
-        };
-        comments.set_track(new_number);
-
-        if run {
-            let Ok(_) = tag.save() else {
-                messages.push(format!("{}", name.red()));
-                continue;
+            let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
+                return format!("{}", name.red());
             };
-            messages.push(format!("{}", name.green()));
-        } else {
-            messages.push(format!("{}", name.yellow()));
-        }
-    }
-    return messages;
+            let comments = tag.vorbis_comments_mut();
+            let Some(old_number_vec) = comments.get("TRACKNUMBER") else {
+                return format!("{}", name.red());
+            };
+            let Some(old_number) = old_number_vec.iter().next() else  {
+                return format!("{}", name.red());
+            };
+            let Ok(new_number) = old_number.parse::<u32>() else {
+                return format!("{}", name.red());
+            };
+
+            if !run {
+                return format!(
+                    "{} :\n{}\t{}",
+                    name,
+                    old_number,
+                    new_number.to_string().yellow()
+                );
+            }
+
+            let result = format!(
+                "{} :\n{}\t{}",
+                name,
+                old_number,
+                new_number.to_string().green()
+            );
+            comments.set_track(new_number);
+            let Ok(_) = tag.save() else {
+                return format!("{}", name.red());
+            };
+            return result;
+        })
+        .collect::<Vec<String>>()
 }
 
 #[derive(Parser, Debug)]
