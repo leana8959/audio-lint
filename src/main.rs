@@ -39,7 +39,7 @@ fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
 }
 
 // Set/Clear genre
-fn set_genre(paths: &Vec<PathBuf>, genre: String, run: bool) -> Vec<String> {
+fn set_genre(paths: &Vec<PathBuf>, genre: &String, run: bool) -> Vec<String> {
     paths
         .par_iter()
         .map(|path| {
@@ -62,7 +62,7 @@ fn set_genre(paths: &Vec<PathBuf>, genre: String, run: bool) -> Vec<String> {
                 return format!("{}", name.red());
             };
 
-            let new_genre = &genre;
+            let new_genre = genre;
 
             // Skip if no changes has to be done
             if old_genre == new_genre {
@@ -222,6 +222,64 @@ fn rename(paths: &mut Vec<PathBuf>, run: bool) -> Vec<String> {
     return messages;
 }
 
+// Set year
+fn set_year(paths: &Vec<PathBuf>, year: u32, run: bool) -> Vec<String> {
+    paths
+        .par_iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .expect("Path should be a file")
+                .to_str()
+                .unwrap();
+
+            // Read year tag
+            let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
+                return format!("{}", name.red());
+            };
+            let comments = tag.vorbis_comments_mut();
+            let Some(old_date_vec) = comments.get("DATE") else {
+                return format!("{}", name.red());
+            };
+            let Some(old_date) = old_date_vec.iter().next() else  {
+                return format!("{}", name.red());
+            };
+
+            // Bind new date
+            let new_date = year;
+
+            // Return if no changes will be made
+            if *old_date == new_date.to_string() {
+                return String::new();
+            }
+
+            // Dry run
+            if !run {
+                return format!(
+                    "{}\n{}\t{}",
+                    name,
+                    old_date.strikethrough(),
+                    new_date.to_string().yellow()
+                );
+            }
+
+            // Save changes
+            let result = format!(
+                "{}\n{}\t{}",
+                name,
+                old_date.strikethrough(),
+                new_date.to_string().green()
+            );
+            comments.set("DATE", vec![new_date.to_string()]);
+            let Ok(_) = tag.save() else {
+                return format!("{}", name.red());
+            };
+            return result;
+        })
+        .filter(|message| !message.is_empty())
+        .collect()
+}
+
 // Normalize year attibute for a given vector of paths to flac files
 fn normalize_year(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
     paths
@@ -248,7 +306,7 @@ fn normalize_year(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
             // Parse into new year
             let re = Regex::new(r"(\d{4})").unwrap();
             let Some(caps) = re.captures(old_date) else {
-                return format!("{}", name.red());
+                return format!("Failed to parse year with regex: {}", name.red());
             };
             let new_date = caps
                 .get(1)
@@ -311,7 +369,7 @@ fn normalize_tracknumber(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
 
             // Parse into new number
             let Ok(new_number) = old_number.parse::<u32>() else {
-                return format!("{}", name.red());
+                return format!("Failed to force track number as int {}", name.red());
             };
 
             // Return if no changes would be made
@@ -398,27 +456,36 @@ struct Args {
 
     #[arg(
         short = 'g',
-        long = "set_genre",
-        help = "change genre to",
+        long = "set-genre",
+        help = "set genre to",
         group = "mode",
         requires = "genre"
     )]
     set_genre: bool,
 
     #[arg(
-        short = 'G',
-        long = "genre",
-        help = "specify genre",
-        default_value_t = String::from("")
+        short = 's',
+        long = "set-year",
+        help = "set year to",
+        group = "mode",
+        requires = "year"
     )]
+    set_year: bool,
+
+    #[arg(short = 'G', long = "genre", help = "specify genre", default_value_t = String::from(""))]
     genre: String,
+
+    #[arg(short = 'Y', long = "year", help = "specify year", default_value_t = 0)]
+    year: u32,
 }
 
 fn main() {
     let args = Args::parse();
     let quiet = args.quiet;
     let run = args.run;
+
     let genre = args.genre;
+    let year = args.year;
 
     let root = Path::new(&args.path);
     let mut sp = Spinner::with_timer(Spinners::Dots, "Reading files".to_string());
@@ -432,14 +499,17 @@ fn main() {
     if args.normalize_year {
         messages.append(&mut normalize_year(&paths, run));
     }
-    if args.rename {
-        messages.append(&mut rename(&mut paths, run))
-    }
     if args.clean_others {
         messages.append(&mut clean_others(&paths, run));
     }
     if args.set_genre {
-        messages.append(&mut set_genre(&paths, genre, run));
+        messages.append(&mut set_genre(&paths, &genre, run));
+    }
+    if args.set_year {
+        messages.append(&mut set_year(&paths, year, run))
+    }
+    if args.rename {
+        messages.append(&mut rename(&mut paths, run))
     }
 
     if !quiet {
