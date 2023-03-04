@@ -6,9 +6,11 @@ use std::path::{Path, PathBuf};
 use clap::{ArgGroup, Parser};
 use colored::Colorize;
 use metaflac;
+use pager::Pager;
 use rayon::prelude::IntoParallelRefIterator;
 use rayon::prelude::ParallelIterator;
 use regex::Regex;
+use spinners::{Spinner, Spinners};
 
 // Read files from given path, recursively.
 fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
@@ -419,6 +421,7 @@ fn main() {
     let genre = args.genre;
 
     let root = Path::new(&args.path);
+    let mut sp = Spinner::with_timer(Spinners::Dots, "Reading files".to_string());
     let mut paths = read_files(root).expect("Please provide a valid path");
 
     let mut messages: Vec<String> = Vec::new();
@@ -440,6 +443,12 @@ fn main() {
     }
 
     if !quiet {
-        println!("{}", messages.join("\n"));
+        if messages.is_empty() {
+            sp.stop_with_message("There's nothing to do, exiting now".to_string());
+        } else {
+            sp.stop_with_newline();
+            Pager::with_pager("less -r").setup();
+            println!("{}", messages.join("\n"));
+        }
     }
 }
