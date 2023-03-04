@@ -3,7 +3,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use clap::Parser;
+use clap::{ArgGroup, Parser};
 use colored::Colorize;
 use metaflac;
 use rayon::prelude::IntoParallelRefIterator;
@@ -191,38 +191,55 @@ fn normalize_tracknumber(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = "None")]
+#[command(group(ArgGroup::new("mode").required(true)))]
 struct Args {
     #[arg(long, help = "save changes to disk")]
     run: bool,
 
-    #[arg(short, long, help = "show what changes will be / has been made")]
+    #[arg(short, long, help = "hush the console output", default_value_t = false)]
     quiet: bool,
+
+    #[arg(
+        short,
+        long = "path",
+        help = "provide path to the program",
+        required = true
+    )]
+    path: String,
 
     #[arg(
         short = 't',
         long = "normalize-tracknumber",
-        help = "remove padding zeros in track numbers"
+        help = "remove padding zeros in track numbers",
+        group = "mode"
     )]
     normalize_tracknumber: bool,
 
     #[arg(
         short = 'y',
         long = "normalize-year",
-        help = "format release year to be four digits"
+        help = "format release year to be four digits",
+        group = "mode"
     )]
     normalize_year: bool,
 
-    #[arg(short = 'r', long = "rename", help = "rename files with metadata")]
+    #[arg(
+        short,
+        long = "rename",
+        help = "rename files with metadata",
+        group = "mode"
+    )]
     rename: bool,
 }
 
 fn main() {
-    let root = Path::new("./test/");
-    let mut paths = read_files(root).expect("Please provide a correct path");
-
     let args = Args::parse();
     let quiet = args.quiet;
     let run = args.run;
+
+    // let root = Path::new("./test/");
+    let root = Path::new(&args.path);
+    let mut paths = read_files(root).expect("Please provide a valid path");
 
     let mut messages: Vec<String> = Vec::new();
 
@@ -234,11 +251,9 @@ fn main() {
         messages.append(&mut normalize_year(&paths, run));
     }
 
-    paths = dbg!(paths);
     if args.rename {
         messages.append(&mut rename(&mut paths, run))
     }
-    dbg!(paths);
 
     if !quiet {
         println!("{}", messages.join("\n"));
