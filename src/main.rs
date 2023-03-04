@@ -34,6 +34,37 @@ fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
         .collect()
 }
 
+/// Remove redundant informations
+fn clean_others(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
+    paths
+        .par_iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .expect("Path should be a file")
+                .to_str()
+                .unwrap();
+
+            let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
+                return format!("{}", name.red());
+            };
+
+            if !run {
+                return format!("{}", name.yellow());
+            }
+
+            let result = format!("{}", name.green());
+            let comments = tag.vorbis_comments_mut();
+            comments.set("COMMENT", vec![""]);
+            comments.set("LYRICS", vec![""]);
+            let Ok(_) = tag.save() else {
+                return format!("{}", name.red());
+            };
+            return result;
+        })
+        .collect::<Vec<String>>()
+}
+
 /// Rename file based on metadata
 fn rename(paths: &mut Vec<PathBuf>, run: bool) -> Vec<String> {
     let mut messages: Vec<String> = Vec::new();
@@ -191,7 +222,7 @@ fn normalize_tracknumber(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = "None")]
-#[command(group(ArgGroup::new("mode").required(true)))]
+#[command(group(ArgGroup::new("mode").required(true).multiple(true)))]
 struct Args {
     #[arg(long, help = "save changes to disk")]
     run: bool,
@@ -230,6 +261,14 @@ struct Args {
         group = "mode"
     )]
     rename: bool,
+
+    #[arg(
+        short,
+        long = "clean-others",
+        help = "remove comments, lyrics, etc",
+        group = "mode"
+    )]
+    clean_others: bool,
 }
 
 fn main() {
@@ -253,6 +292,10 @@ fn main() {
 
     if args.rename {
         messages.append(&mut rename(&mut paths, run))
+    }
+
+    if args.clean_others {
+        messages.append(&mut clean_others(&paths, run));
     }
 
     if !quiet {
