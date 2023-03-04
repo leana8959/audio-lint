@@ -10,7 +10,7 @@ use rayon::prelude::IntoParallelRefIterator;
 use rayon::prelude::ParallelIterator;
 use regex::Regex;
 
-/// Read files from given path, recursively.
+// Read files from given path, recursively.
 fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
     fn get_entries(path: &Path) -> Result<Vec<fs::DirEntry>, io::Error> {
         let mut walked: Vec<fs::DirEntry> = Vec::new();
@@ -34,7 +34,7 @@ fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
         .collect()
 }
 
-/// Set/Clear genre
+// Set/Clear genre
 fn set_genre(paths: &Vec<PathBuf>, genre: String, run: bool) -> Vec<String> {
     paths
         .par_iter()
@@ -61,7 +61,7 @@ fn set_genre(paths: &Vec<PathBuf>, genre: String, run: bool) -> Vec<String> {
                 return format!(
                     "{} :\n{}\t{}",
                     name,
-                    old_genre,
+                    old_genre.strikethrough(),
                     new_genre.to_string().yellow()
                 );
             }
@@ -69,7 +69,7 @@ fn set_genre(paths: &Vec<PathBuf>, genre: String, run: bool) -> Vec<String> {
             let result = format!(
                 "{} :\n{}\t{}",
                 name,
-                old_genre,
+                old_genre.strikethrough(),
                 new_genre.to_string().green()
             );
             comments.set_genre(vec![new_genre]);
@@ -78,10 +78,10 @@ fn set_genre(paths: &Vec<PathBuf>, genre: String, run: bool) -> Vec<String> {
             };
             return result;
         })
-        .collect::<Vec<String>>()
+        .collect()
 }
 
-/// Remove redundant informations
+// Remove redundant informations
 fn clean_others(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
     paths
         .par_iter()
@@ -109,10 +109,10 @@ fn clean_others(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
             };
             return result;
         })
-        .collect::<Vec<String>>()
+        .collect()
 }
 
-/// Rename file based on metadata
+// Rename file based on metadata
 fn rename(paths: &mut Vec<PathBuf>, run: bool) -> Vec<String> {
     let mut messages: Vec<String> = Vec::new();
 
@@ -155,22 +155,27 @@ fn rename(paths: &mut Vec<PathBuf>, run: bool) -> Vec<String> {
         let new_name = format!("{:0>2} - {}.{}", tracknumber, title, ext);
         let new_path = parent.join(&new_name);
 
-        if run {
-            let Ok(_) = fs::rename(path, &new_path) else {
-                messages.push(format!("{}", old_name.red()));
-                continue;
-            };
-            paths[idx] = new_path.clone();
-            messages.push(format!("{} ->\n{}", old_name, new_name.green()));
-        } else {
-            messages.push(format!("{} ->\n{}", old_name.yellow(), new_name.yellow()));
+        if !run {
+            messages.push(format!(
+                "{} {}",
+                old_name.strikethrough(),
+                new_name.yellow()
+            ));
+            continue;
         }
+
+        let Ok(_) = fs::rename(path, &new_path) else {
+            messages.push(format!("{}", old_name.red()));
+            continue;
+        };
+        paths[idx] = new_path.clone();
+        messages.push(format!("{} {}", old_name.strikethrough(), new_name.green()));
     }
 
     return messages;
 }
 
-/// Normalize year attibute for a given vector of paths to flac files
+// Normalize year attibute for a given vector of paths to flac files
 fn normalize_year(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
     paths
         .par_iter()
@@ -203,22 +208,27 @@ fn normalize_year(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
                 return format!(
                     "{} :\n{}\t{}",
                     name,
-                    old_date,
+                    old_date.strikethrough(),
                     new_date.to_string().yellow()
                 );
             }
 
-            let result = format!("{} :\n{}\t{}", name, old_date, new_date.to_string().green());
+            let result = format!(
+                "{} :\n{}\t{}",
+                name,
+                old_date.strikethrough(),
+                new_date.to_string().green()
+            );
             comments.set("DATE", vec![new_date]);
             let Ok(_) = tag.save() else {
                 return format!("{}", name.red());
             };
             return result;
         })
-        .collect::<Vec<String>>()
+        .collect()
 }
 
-/// Normalize tracknumber attribute for a vector of paths to flac files
+// Normalize tracknumber attribute for a vector of paths to flac files
 fn normalize_tracknumber(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
     paths
         .par_iter()
@@ -247,7 +257,7 @@ fn normalize_tracknumber(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
                 return format!(
                     "{} :\n{}\t{}",
                     name,
-                    old_number,
+                    old_number.strikethrough(),
                     new_number.to_string().yellow()
                 );
             }
@@ -255,7 +265,7 @@ fn normalize_tracknumber(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
             let result = format!(
                 "{} :\n{}\t{}",
                 name,
-                old_number,
+                old_number.strikethrough(),
                 new_number.to_string().green()
             );
             comments.set_track(new_number);
@@ -264,7 +274,7 @@ fn normalize_tracknumber(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
             };
             return result;
         })
-        .collect::<Vec<String>>()
+        .collect()
 }
 
 #[derive(Parser, Debug)]
@@ -320,13 +330,18 @@ struct Args {
     #[arg(
         short = 'g',
         long = "set_genre",
-        help = "set genre to",
+        help = "change genre to",
         group = "mode",
         requires = "genre"
     )]
     set_genre: bool,
 
-    #[arg(short = 'G', long = "genre", help = "specify genre")]
+    #[arg(
+        short = 'G',
+        long = "genre",
+        help = "specify genre",
+        default_value_t = String::from("")
+    )]
     genre: String,
 }
 
