@@ -18,9 +18,11 @@ fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
         for entry in fs::read_dir(path)? {
             let entry = entry?;
             if entry.metadata()?.is_dir() {
+                // Recursive call
                 let mut sub_entries = get_entries(entry.path().as_path())?;
                 walked.append(&mut sub_entries);
             } else if entry.path().extension() == Some(&OsString::from("flac")) {
+                // Append flac file to walked vec
                 walked.push(entry);
             }
         }
@@ -97,22 +99,40 @@ fn clean_others(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
     paths
         .par_iter()
         .map(|path| {
+            // Read filename
             let name = path
                 .file_name()
                 .expect("Path should be a file")
                 .to_str()
                 .unwrap();
 
+            // Read metadata
             let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
                 return format!("{}", name.red());
             };
+            let comments = tag.vorbis_comments_mut();
 
+            let has_comment = comments
+                .get("COMMENT")
+                .and_then(|v| v.iter().next())
+                .map_or(false, |s| !s.is_empty());
+            let has_lyrics = comments
+                .get("LYRICS")
+                .and_then(|v| v.iter().next())
+                .map_or(false, |s| !s.is_empty());
+
+            // Return if nothing needs to be done
+            if !has_lyrics && !has_comment {
+                return String::new();
+            }
+
+            // Dry run
             if !run {
                 return format!("{}", name.yellow());
             }
 
+            // Save changes
             let result = format!("{}", name.green());
-            let comments = tag.vorbis_comments_mut();
             comments.set("COMMENT", vec![""]);
             comments.set("LYRICS", vec![""]);
             let Ok(_) = tag.save() else {
@@ -120,6 +140,7 @@ fn clean_others(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
             };
             return result;
         })
+        .filter(|message| !message.is_empty())
         .collect()
 }
 
