@@ -34,6 +34,53 @@ fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
         .collect()
 }
 
+/// Set/Clear genre
+fn set_genre(paths: &Vec<PathBuf>, genre: String, run: bool) -> Vec<String> {
+    paths
+        .par_iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .expect("Path should be a file")
+                .to_str()
+                .unwrap();
+
+            let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
+                return format!("{}", name.red());
+            };
+            let comments = tag.vorbis_comments_mut();
+            let Some(old_genre_vec) = comments.get("GENRE") else {
+                return format!("{}", name.red());
+            };
+            let Some(old_genre) = old_genre_vec.iter().next() else  {
+                return format!("{}", name.red());
+            };
+            let new_genre = &genre;
+
+            if !run {
+                return format!(
+                    "{} :\n{}\t{}",
+                    name,
+                    old_genre,
+                    new_genre.to_string().yellow()
+                );
+            }
+
+            let result = format!(
+                "{} :\n{}\t{}",
+                name,
+                old_genre,
+                new_genre.to_string().green()
+            );
+            comments.set_genre(vec![new_genre]);
+            let Ok(_) = tag.save() else {
+                return format!("{}", name.red());
+            };
+            return result;
+        })
+        .collect::<Vec<String>>()
+}
+
 /// Remove redundant informations
 fn clean_others(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
     paths
@@ -269,12 +316,25 @@ struct Args {
         group = "mode"
     )]
     clean_others: bool,
+
+    #[arg(
+        short = 'g',
+        long = "set_genre",
+        help = "set genre to",
+        group = "mode",
+        requires = "genre"
+    )]
+    set_genre: bool,
+
+    #[arg(short = 'G', long = "genre", help = "specify genre")]
+    genre: String,
 }
 
 fn main() {
     let args = Args::parse();
     let quiet = args.quiet;
     let run = args.run;
+    let genre = args.genre;
 
     // let root = Path::new("./test/");
     let root = Path::new(&args.path);
@@ -296,6 +356,10 @@ fn main() {
 
     if args.clean_others {
         messages.append(&mut clean_others(&paths, run));
+    }
+
+    if args.set_genre {
+        messages.append(&mut set_genre(&paths, genre, run));
     }
 
     if !quiet {
