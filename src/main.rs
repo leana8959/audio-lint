@@ -188,7 +188,12 @@ fn rename(paths: &mut Vec<PathBuf>, run: bool) -> Vec<String> {
         };
 
         // Create new name
-        let new_name = format!("{:0>2} - {}.{}", tracknumber, title, ext);
+        let new_name = format!(
+            "{:0>2} - {}.{}",
+            tracknumber,
+            title.replace(":", " ").replace("/", " "),
+            ext
+        );
         let new_path = parent.join(&new_name);
 
         // Skip if no changes needs to be done
@@ -488,7 +493,7 @@ fn main() {
     let year = args.year;
 
     let root = Path::new(&args.path);
-    let mut sp = Spinner::with_timer(Spinners::Dots, "Reading files".to_string());
+    let mut sp = Spinner::with_timer(Spinners::Dots, "Processing...".to_string());
     let mut paths = read_files(root).expect("Please provide a valid path");
 
     let mut messages: Vec<String> = Vec::new();
