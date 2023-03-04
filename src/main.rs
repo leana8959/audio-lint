@@ -39,12 +39,14 @@ fn set_genre(paths: &Vec<PathBuf>, genre: String, run: bool) -> Vec<String> {
     paths
         .par_iter()
         .map(|path| {
+            // Unwrap name
             let name = path
                 .file_name()
                 .expect("Path should be a file")
                 .to_str()
                 .unwrap();
 
+            // Read metadata
             let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
                 return format!("{}", name.red());
             };
@@ -55,19 +57,27 @@ fn set_genre(paths: &Vec<PathBuf>, genre: String, run: bool) -> Vec<String> {
             let Some(old_genre) = old_genre_vec.iter().next() else  {
                 return format!("{}", name.red());
             };
+
             let new_genre = &genre;
 
+            // Skip if no changes has to be done
+            if old_genre == new_genre {
+                return String::new();
+            }
+
+            // Dry run
             if !run {
                 return format!(
-                    "{} :\n{}\t{}",
+                    "{}\n{}\t{}",
                     name,
                     old_genre.strikethrough(),
                     new_genre.to_string().yellow()
                 );
             }
 
+            // Save changes
             let result = format!(
-                "{} :\n{}\t{}",
+                "{}\n{}\t{}",
                 name,
                 old_genre.strikethrough(),
                 new_genre.to_string().green()
@@ -78,6 +88,7 @@ fn set_genre(paths: &Vec<PathBuf>, genre: String, run: bool) -> Vec<String> {
             };
             return result;
         })
+        .filter(|message| !message.is_empty())
         .collect()
 }
 
@@ -117,6 +128,7 @@ fn rename(paths: &mut Vec<PathBuf>, run: bool) -> Vec<String> {
     let mut messages: Vec<String> = Vec::new();
 
     for (idx, path) in paths.clone().iter().enumerate() {
+        // Unwrap name, extension, and parent path
         let old_name = path
             .file_name()
             .expect("Path should be a file")
@@ -127,9 +139,9 @@ fn rename(paths: &mut Vec<PathBuf>, run: bool) -> Vec<String> {
             .expect("Should have a vaild extension")
             .to_str()
             .unwrap();
-
         let parent = path.parent().expect("Parent folder should be vaild");
 
+        // Read metadata
         let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
             messages.push(format!("{}", old_name.red()));
             continue;
@@ -152,24 +164,36 @@ fn rename(paths: &mut Vec<PathBuf>, run: bool) -> Vec<String> {
             continue;
         };
 
+        // Create new name
         let new_name = format!("{:0>2} - {}.{}", tracknumber, title, ext);
         let new_path = parent.join(&new_name);
 
+        // Skip if no changes needs to be done
+        if old_name == new_name {
+            continue;
+        }
+
+        // Dry run
         if !run {
             messages.push(format!(
-                "{} {}",
+                "{} -> {}",
                 old_name.strikethrough(),
                 new_name.yellow()
             ));
             continue;
         }
 
+        // Save changes
         let Ok(_) = fs::rename(path, &new_path) else {
             messages.push(format!("{}", old_name.red()));
             continue;
         };
         paths[idx] = new_path.clone();
-        messages.push(format!("{} {}", old_name.strikethrough(), new_name.green()));
+        messages.push(format!(
+            "{} -> {}",
+            old_name.strikethrough(),
+            new_name.green()
+        ));
     }
 
     return messages;
@@ -186,6 +210,7 @@ fn normalize_year(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
                 .to_str()
                 .unwrap();
 
+            // Read year tag
             let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
                 return format!("{}", name.red());
             };
@@ -196,6 +221,8 @@ fn normalize_year(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
             let Some(old_date) = old_date_vec.iter().next() else  {
                 return format!("{}", name.red());
             };
+
+            // Parse into new year
             let re = Regex::new(r"(\d{4})").unwrap();
             let Some(caps) = re.captures(old_date) else {
                 return format!("{}", name.red());
@@ -204,17 +231,24 @@ fn normalize_year(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
                 .get(1)
                 .map_or(old_date.clone(), |s| s.as_str().to_owned());
 
+            // Return if no changes will be made
+            if *old_date == new_date {
+                return String::new();
+            }
+
+            // Dry run
             if !run {
                 return format!(
-                    "{} :\n{}\t{}",
+                    "{}\n{}\t{}",
                     name,
                     old_date.strikethrough(),
                     new_date.to_string().yellow()
                 );
             }
 
+            // Save changes
             let result = format!(
-                "{} :\n{}\t{}",
+                "{}\n{}\t{}",
                 name,
                 old_date.strikethrough(),
                 new_date.to_string().green()
@@ -225,6 +259,7 @@ fn normalize_year(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
             };
             return result;
         })
+        .filter(|message| !message.is_empty())
         .collect()
 }
 
@@ -239,6 +274,7 @@ fn normalize_tracknumber(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
                 .to_str()
                 .unwrap();
 
+            // Obtain old number
             let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
                 return format!("{}", name.red());
             };
@@ -249,21 +285,30 @@ fn normalize_tracknumber(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
             let Some(old_number) = old_number_vec.iter().next() else  {
                 return format!("{}", name.red());
             };
+
+            // Parse into new number
             let Ok(new_number) = old_number.parse::<u32>() else {
                 return format!("{}", name.red());
             };
 
+            // Return if no changes would be made
+            if *old_number == new_number.to_string() {
+                return String::new();
+            }
+
+            // Dry run
             if !run {
                 return format!(
-                    "{} :\n{}\t{}",
+                    "{}\n{}\t{}",
                     name,
                     old_number.strikethrough(),
                     new_number.to_string().yellow()
                 );
             }
 
+            // Saving the changes
             let result = format!(
-                "{} :\n{}\t{}",
+                "{}\n{}\t{}",
                 name,
                 old_number.strikethrough(),
                 new_number.to_string().green()
@@ -274,6 +319,7 @@ fn normalize_tracknumber(paths: &Vec<PathBuf>, run: bool) -> Vec<String> {
             };
             return result;
         })
+        .filter(|message| !message.is_empty())
         .collect()
 }
 
@@ -351,7 +397,6 @@ fn main() {
     let run = args.run;
     let genre = args.genre;
 
-    // let root = Path::new("./test/");
     let root = Path::new(&args.path);
     let mut paths = read_files(root).expect("Please provide a valid path");
 
@@ -360,19 +405,15 @@ fn main() {
     if args.normalize_tracknumber {
         messages.append(&mut normalize_tracknumber(&paths, run));
     }
-
     if args.normalize_year {
         messages.append(&mut normalize_year(&paths, run));
     }
-
     if args.rename {
         messages.append(&mut rename(&mut paths, run))
     }
-
     if args.clean_others {
         messages.append(&mut clean_others(&paths, run));
     }
-
     if args.set_genre {
         messages.append(&mut set_genre(&paths, genre, run));
     }
