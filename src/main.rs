@@ -13,33 +13,6 @@ use regex::Regex;
 use spinners::{Spinner, Spinners};
 use walkdir::WalkDir;
 
-// Read files from given path, recursively.
-fn read_files(path: &Path) -> Result<Vec<PathBuf>, io::Error> {
-    fn get_entries(path: &Path) -> Result<Vec<fs::DirEntry>, io::Error> {
-        let mut walked: Vec<fs::DirEntry> = Vec::new();
-
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            if entry.metadata()?.is_dir() {
-                // Recursive call
-                let mut sub_entries = get_entries(entry.path().as_path())?;
-                walked.append(&mut sub_entries);
-            } else if entry.path().extension() == Some(&OsString::from("flac")) {
-                // Append flac file to walked vec
-                walked.push(entry);
-            }
-        }
-
-        Ok(walked)
-    }
-
-    get_entries(&path)?
-        .iter()
-        .map(|entry| Ok(entry.path()))
-        .collect()
-}
-
-// Set/Clear genre
 fn set_genre(path: &Path, genre: &String, run: bool) -> Option<String> {
     // Unwrap name
     let name = path
@@ -91,7 +64,6 @@ fn set_genre(path: &Path, genre: &String, run: bool) -> Option<String> {
     return Some(result);
 }
 
-// Remove redundant informations
 fn clean_others(path: &Path, run: bool) -> Option<String> {
     // Read filename
     let name = path
@@ -135,89 +107,75 @@ fn clean_others(path: &Path, run: bool) -> Option<String> {
     return Some(result);
 }
 
-// Rename file based on metadata
 // FIXME
-fn rename(paths: &mut Vec<PathBuf>, run: bool) -> Vec<String> {
+fn rename(path: &Path, run: bool) -> Option<String> {
     let mut messages: Vec<String> = Vec::new();
 
-    for (idx, path) in paths.clone().iter().enumerate() {
-        // Unwrap name, extension, and parent path
-        let old_name = path
-            .file_name()
-            .expect("Path should be a file")
-            .to_str()
-            .unwrap();
-        let ext = path
-            .extension()
-            .expect("Should have a vaild extension")
-            .to_str()
-            .unwrap();
-        let parent = path.parent().expect("Parent folder should be vaild");
+    // Unwrap name, extension, and parent path
+    let old_name = path
+        .file_name()
+        .expect("Path should be a file")
+        .to_str()
+        .unwrap();
+    let ext = path
+        .extension()
+        .expect("Should have a vaild extension")
+        .to_str()
+        .unwrap();
+    let parent = path.parent().expect("Parent folder should be vaild");
 
-        // Read metadata
-        let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
-            messages.push(format!("{}", old_name.red()));
-            continue;
-        };
-        let comments = tag.vorbis_comments_mut();
-        let Some(tracknumber_vec) = comments.get("TRACKNUMBER") else {
-            messages.push(format!("{}", old_name.red()));
-            continue;
-        };
-        let Some(tracknumber) = tracknumber_vec.iter().next() else  {
-            messages.push(format!("{}", old_name.red()));
-            continue;
-        };
-        let Some(title_vec) = comments.get("TITLE") else {
-            messages.push(format!("{}", old_name.red()));
-            continue;
-        };
-        let Some(title) = title_vec.iter().next() else  {
-            messages.push(format!("{}", old_name.red()));
-            continue;
-        };
+    // Read metadata
+    let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
+        return Some(format!("{}", old_name.red()));
+    };
+    let comments = tag.vorbis_comments_mut();
+    let Some(tracknumber_vec) = comments.get("TRACKNUMBER") else {
+        return Some(format!("{}", old_name.red()));
+    };
+    let Some(tracknumber) = tracknumber_vec.iter().next() else  {
+        return Some(format!("{}", old_name.red()));
+    };
+    let Some(title_vec) = comments.get("TITLE") else {
+        return Some(format!("{}", old_name.red()));
+    };
+    let Some(title) = title_vec.iter().next() else  {
+        return Some(format!("{}", old_name.red()));
+    };
 
-        // Create new name
-        let new_name = format!(
-            "{:0>2} - {}.{}",
-            tracknumber,
-            title.replace(":", " ").replace("/", " "),
-            ext
-        );
-        let new_path = parent.join(&new_name);
+    // Create new name
+    let new_name = format!(
+        "{:0>2} - {}.{}",
+        tracknumber,
+        title.replace(":", " ").replace("/", " "),
+        ext
+    );
+    let new_path = parent.join(&new_name);
 
-        // Skip if no changes needs to be done
-        if old_name == new_name {
-            continue;
-        }
+    // Skip if no changes needs to be done
+    if old_name == new_name {
+        return None;
+    }
 
-        // Dry run
-        if !run {
-            messages.push(format!(
-                "{} -> {}",
-                old_name.strikethrough(),
-                new_name.yellow()
-            ));
-            continue;
-        }
-
-        // Save changes
-        let Ok(_) = fs::rename(path, &new_path) else {
-            messages.push(format!("{}", old_name.red()));
-            continue;
-        };
-        paths[idx] = new_path.clone();
-        messages.push(format!(
+    // Dry run
+    if !run {
+        return Some(format!(
             "{} -> {}",
             old_name.strikethrough(),
-            new_name.green()
+            new_name.yellow()
         ));
     }
 
-    return messages;
+    // Save changes
+    let Ok(_) = fs::rename(path, &new_path) else {
+        return Some(format!("{}", old_name.red()));
+    };
+    return Some(format!(
+        "{} -> {}",
+        old_name.strikethrough(),
+        new_name.green()
+    ));
 }
 
-// Set year
 fn set_year(path: &Path, year: u32, run: bool) -> Option<String> {
     let name = path
         .file_name()
@@ -269,7 +227,6 @@ fn set_year(path: &Path, year: u32, run: bool) -> Option<String> {
     return Some(result);
 }
 
-// Normalize year attibute for a given vector of paths to flac files
 fn normalize_year(path: &Path, run: bool) -> Option<String> {
     let name = path
         .file_name()
@@ -327,7 +284,6 @@ fn normalize_year(path: &Path, run: bool) -> Option<String> {
     return Some(result);
 }
 
-// Normalize tracknumber attribute for a vector of paths to flac files
 fn normalize_tracknumber(path: &Path, run: bool) -> Option<String> {
     let name = path
         .file_name()
@@ -467,6 +423,8 @@ fn main() {
     let root = Path::new(&args.path);
     let mut sp = Spinner::with_timer(Spinners::Dots, "Processing...".to_string());
 
+    // TODO: run 100files in parallel at a time
+
     let mut messages: Vec<String> = Vec::new();
     for entry in WalkDir::new(root)
         .into_iter()
@@ -501,32 +459,12 @@ fn main() {
                 messages.push(message);
             }
         }
-
-        dbg!(path);
+        if args.rename {
+            if let Some(message) = rename(path, run) {
+                messages.push(message);
+            }
+        }
     }
-    // let mut paths = read_files(root).expect("Please provide a valid path");
-    //
-    // let mut messages: Vec<String> = Vec::new();
-    //
-    // if args.normalize_tracknumber {
-    //     messages.append(&mut normalize_tracknumber(&paths, run));
-    // }
-    // if args.normalize_year {
-    //     messages.append(&mut normalize_year(&paths, run));
-    // }
-    // if args.clean_others {
-    //     messages.append(&mut clean_others(&paths, run));
-    // }
-    // if args.set_genre {
-    //     messages.append(&mut set_genre(&paths, &genre, run));
-    // }
-    // if args.set_year {
-    //     messages.append(&mut set_year(&paths, year, run))
-    // }
-    // if args.rename {
-    //     messages.append(&mut rename(&mut paths, run))
-    // }
-    //
     if !quiet {
         if messages.is_empty() {
             sp.stop_with_message("There's nothing to do, exiting now".to_string());
