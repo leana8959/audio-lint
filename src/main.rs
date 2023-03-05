@@ -8,8 +8,59 @@ use metaflac;
 use pager::Pager;
 use regex::Regex;
 use spinner::SpinnerBuilder;
+use titlecase::titlecase;
 use unic_normal::StrNormalForm;
 use walkdir::WalkDir;
+
+fn normalize_title(path: &Path, run: bool) -> Option<String> {
+    // Unwrap name
+    let name = path
+        .file_name()
+        .expect("Path should be a file")
+        .to_str()
+        .unwrap();
+
+    // Read metadata
+    let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
+        return Some(format!("{}", name.red()));
+    };
+    let comments = tag.vorbis_comments_mut();
+    let Some(old_title_vec) = comments.get("TITLE") else {
+        return Some(format!("{}", name.red()));
+    };
+    let Some(old_title) = old_title_vec.iter().next() else  {
+        return Some(format!("{}", name.red()));
+    };
+
+    // Normalize track name
+    let new_title = titlecase(old_title);
+
+    // Skip if no changes has to be done
+    if *old_title == new_title {
+        return None;
+    }
+
+    // Dry run
+    if !run {
+        return Some(format!(
+            "{} -> {}",
+            old_title.strikethrough(),
+            new_title.to_string().yellow()
+        ));
+    }
+
+    // Save changes
+    let result = format!(
+        "{} -> {}",
+        old_title.strikethrough(),
+        new_title.to_string().green()
+    );
+    comments.set_genre(vec![new_title]);
+    let Ok(_) = tag.save() else {
+        return Some(format!("{}", name.red()));
+    };
+    return Some(result);
+}
 
 fn set_genre(path: &Path, genre: &String, run: bool) -> Option<String> {
     // Unwrap name
@@ -41,7 +92,7 @@ fn set_genre(path: &Path, genre: &String, run: bool) -> Option<String> {
     // Dry run
     if !run {
         return Some(format!(
-            "{} ->{}",
+            "{} -> {}",
             old_genre.strikethrough(),
             new_genre.to_string().yellow()
         ));
@@ -352,6 +403,14 @@ struct Args {
     normalize_tracknumber: bool,
 
     #[arg(
+        short = 'T',
+        long = "normalize-title",
+        help = "format title to title case",
+        group = "mode"
+    )]
+    normalize_title: bool,
+
+    #[arg(
         short = 'y',
         long = "normalize-year",
         help = "format release year to be four digits",
@@ -425,6 +484,11 @@ fn main() {
                 buffer.push(format!("\tNorm. num.: {}", message));
             }
         }
+        if args.normalize_title {
+            if let Some(message) = normalize_title(path, run) {
+                buffer.push(format!("\tNorm. title: {}", message));
+            }
+        }
         if args.normalize_year {
             if let Some(message) = normalize_year(path, run) {
                 buffer.push(format!("\tNorm. year: {}", message));
@@ -457,11 +521,13 @@ fn main() {
         }
     }
 
+    sp.message("Done !".to_string());
+    println!("\n");
+
     if !quiet {
         if messages.is_empty() {
             println!("There's nothing to do, exiting now");
         } else {
-            sp.message("Done !".to_string());
             Pager::with_pager("less -r").setup();
             println!("{}", messages.join("\n"));
         }
