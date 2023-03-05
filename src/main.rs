@@ -40,8 +40,7 @@ fn set_genre(path: &Path, genre: &String, run: bool) -> Option<String> {
     // Dry run
     if !run {
         return Some(format!(
-            "{}\n{}\t{}",
-            name,
+            "{} ->{}",
             old_genre.strikethrough(),
             new_genre.to_string().yellow()
         ));
@@ -49,8 +48,7 @@ fn set_genre(path: &Path, genre: &String, run: bool) -> Option<String> {
 
     // Save changes
     let result = format!(
-        "{}\n{}\t{}",
-        name,
+        "{} -> {}",
         old_genre.strikethrough(),
         new_genre.to_string().green()
     );
@@ -201,8 +199,7 @@ fn set_year(path: &Path, year: u32, run: bool) -> Option<String> {
     // Dry run
     if !run {
         return Some(format!(
-            "{}\n{}\t{}",
-            name,
+            "{} -> {}",
             old_date.strikethrough(),
             new_date.to_string().yellow()
         ));
@@ -210,8 +207,7 @@ fn set_year(path: &Path, year: u32, run: bool) -> Option<String> {
 
     // Save changes
     let result = format!(
-        "{}\n{}\t{}",
-        name,
+        "{} -> {}",
         old_date.strikethrough(),
         new_date.to_string().green()
     );
@@ -258,8 +254,7 @@ fn normalize_year(path: &Path, run: bool) -> Option<String> {
     // Dry run
     if !run {
         return Some(format!(
-            "{}\n{}\t{}",
-            name,
+            "{} -> {}",
             old_date.strikethrough(),
             new_date.to_string().yellow()
         ));
@@ -267,8 +262,7 @@ fn normalize_year(path: &Path, run: bool) -> Option<String> {
 
     // Save changes
     let result = format!(
-        "{}\n{}\t{}",
-        name,
+        "{} -> {}",
         old_date.strikethrough(),
         new_date.to_string().green()
     );
@@ -311,8 +305,7 @@ fn normalize_tracknumber(path: &Path, run: bool) -> Option<String> {
     // Dry run
     if !run {
         return Some(format!(
-            "{}\n{}\t{}",
-            name,
+            "{} -> {}",
             old_number.strikethrough(),
             new_number.to_string().yellow()
         ));
@@ -320,8 +313,7 @@ fn normalize_tracknumber(path: &Path, run: bool) -> Option<String> {
 
     // Saving the changes
     let result = format!(
-        "{}\n{}\t{}",
-        name,
+        "{} -> {}",
         old_number.strikethrough(),
         new_number.to_string().green()
     );
@@ -427,34 +419,35 @@ fn main() {
         sp.update(path.to_str().unwrap().to_string());
 
         // TODO: remove name feedback in each individual function
+        messages.push(format!("{}", path.to_str().unwrap().bold().italic()));
         if args.normalize_tracknumber {
             if let Some(message) = normalize_tracknumber(path, run) {
-                messages.push(message);
+                messages.push(format!("\tNorm. num.: {}", message));
             }
         }
         if args.normalize_year {
             if let Some(message) = normalize_year(path, run) {
-                messages.push(message);
+                messages.push(format!("\tNorm. year: {}", message));
             }
         }
         if args.clean_others {
             if let Some(message) = clean_others(path, run) {
-                messages.push(message);
+                messages.push(format!("\tRemove junk: {}", message));
             }
         }
         if args.set_genre {
             if let Some(message) = set_genre(path, &args.genre, run) {
-                messages.push(message);
+                messages.push(format!("\tSet genre: {}", message));
             }
         }
         if args.set_year {
             if let Some(message) = set_year(path, args.year, run) {
-                messages.push(message);
+                messages.push(format!("\tSet year: {}", message));
             }
         }
         if args.rename {
             if let Some(message) = rename(path, run) {
-                messages.push(message);
+                messages.push(format!("\tRename: {}", message));
             }
         }
     }
