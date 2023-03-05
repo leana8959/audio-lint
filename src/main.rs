@@ -8,6 +8,7 @@ use metaflac;
 use pager::Pager;
 use regex::Regex;
 use spinner::SpinnerBuilder;
+use unic_normal::StrNormalForm;
 use walkdir::WalkDir;
 
 fn set_genre(path: &Path, genre: &String, run: bool) -> Option<String> {
@@ -142,10 +143,9 @@ fn rename(path: &Path, run: bool) -> Option<String> {
         title.replace(":", " ").replace("/", " "),
         ext
     );
-    let new_path = parent.join(&new_name);
 
     // Skip if no changes needs to be done
-    if old_name == new_name {
+    if old_name.nfd().eq(new_name.nfd()) {
         return None;
     }
 
@@ -159,6 +159,7 @@ fn rename(path: &Path, run: bool) -> Option<String> {
     }
 
     // Save changes
+    let new_path = parent.join(&new_name);
     let Ok(_) = fs::rename(path, &new_path) else {
         return Some(format!("{}", old_name.red()));
     };
