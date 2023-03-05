@@ -1,14 +1,13 @@
 use std::ffi::OsString;
 use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::Mutex;
 
 use clap::{ArgGroup, Parser};
 use colored::Colorize;
 use metaflac;
 use pager::Pager;
-use rayon::prelude::IntoParallelRefIterator;
-use rayon::prelude::ParallelIterator;
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use regex::Regex;
 use spinners::{Spinner, Spinners};
 use walkdir::WalkDir;
@@ -109,8 +108,6 @@ fn clean_others(path: &Path, run: bool) -> Option<String> {
 
 // FIXME
 fn rename(path: &Path, run: bool) -> Option<String> {
-    let mut messages: Vec<String> = Vec::new();
-
     // Unwrap name, extension, and parent path
     let old_name = path
         .file_name()
@@ -424,54 +421,99 @@ fn main() {
     let mut sp = Spinner::with_timer(Spinners::Dots, "Processing...".to_string());
 
     // TODO: run 100files in parallel at a time
+    let messages: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-    let mut messages: Vec<String> = Vec::new();
-    for entry in WalkDir::new(root)
+    let mut entry_iter = WalkDir::new(root)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension() == Some(&OsString::from("flac")))
-    {
-        let path = entry.path();
+        .peekable();
 
-        // TODO: remove name feedback in each individual function
-        if args.normalize_tracknumber {
-            if let Some(message) = normalize_tracknumber(path, run) {
-                messages.push(message);
+    while entry_iter.peek().is_some() {
+        let par = entry_iter.by_ref().take(20).collect::<Vec<_>>();
+        par.par_iter().for_each(|entry| {
+            let path = entry.path();
+
+            // TODO: remove name feedback in each individual function
+            if args.normalize_tracknumber {
+                if let Some(message) = normalize_tracknumber(path, run) {
+                    messages.lock().unwrap().push(message);
+                }
             }
-        }
-        if args.normalize_year {
-            if let Some(message) = normalize_year(path, run) {
-                messages.push(message);
+            if args.normalize_year {
+                if let Some(message) = normalize_year(path, run) {
+                    messages.lock().unwrap().push(message);
+                }
             }
-        }
-        if args.clean_others {
-            if let Some(message) = clean_others(path, run) {
-                messages.push(message);
+            if args.clean_others {
+                if let Some(message) = clean_others(path, run) {
+                    messages.lock().unwrap().push(message);
+                }
             }
-        }
-        if args.set_genre {
-            if let Some(message) = set_genre(path, &genre, run) {
-                messages.push(message);
+            if args.set_genre {
+                if let Some(message) = set_genre(path, &genre, run) {
+                    messages.lock().unwrap().push(message);
+                }
             }
-        }
-        if args.set_year {
-            if let Some(message) = set_year(path, year, run) {
-                messages.push(message);
+            if args.set_year {
+                if let Some(message) = set_year(path, year, run) {
+                    messages.lock().unwrap().push(message);
+                }
             }
-        }
-        if args.rename {
-            if let Some(message) = rename(path, run) {
-                messages.push(message);
+            if args.rename {
+                if let Some(message) = rename(path, run) {
+                    messages.lock().unwrap().push(message);
+                }
             }
-        }
+        })
     }
+
+    // for entry in WalkDir::new(root)
+    //     .into_iter()
+    //     .filter_map(|e| e.ok())
+    //     .filter(|e| e.path().extension() == Some(&OsString::from("flac")))
+    // {
+    //     let path = entry.path();
+    //
+    //     // TODO: remove name feedback in each individual function
+    //     if args.normalize_tracknumber {
+    //         if let Some(message) = normalize_tracknumber(path, run) {
+    //             messages.push(message);
+    //         }
+    //     }
+    //     if args.normalize_year {
+    //         if let Some(message) = normalize_year(path, run) {
+    //             messages.push(message);
+    //         }
+    //     }
+    //     if args.clean_others {
+    //         if let Some(message) = clean_others(path, run) {
+    //             messages.push(message);
+    //         }
+    //     }
+    //     if args.set_genre {
+    //         if let Some(message) = set_genre(path, &genre, run) {
+    //             messages.push(message);
+    //         }
+    //     }
+    //     if args.set_year {
+    //         if let Some(message) = set_year(path, year, run) {
+    //             messages.push(message);
+    //         }
+    //     }
+    //     if args.rename {
+    //         if let Some(message) = rename(path, run) {
+    //             messages.push(message);
+    //         }
+    //     }
+    // }
     if !quiet {
-        if messages.is_empty() {
+        if messages.lock().unwrap().is_empty() {
             sp.stop_with_message("There's nothing to do, exiting now".to_string());
         } else {
             sp.stop_with_newline();
             Pager::with_pager("less -r").setup();
-            println!("{}", messages.join("\n"));
+            println!("{}", messages.lock().unwrap().join("\n"));
         }
     }
 }
