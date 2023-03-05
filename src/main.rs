@@ -418,44 +418,48 @@ fn main() {
     {
         let path = entry.path();
         sp.update(path.to_str().unwrap().to_string());
+        let mut buffer: Vec<String> = Vec::new();
 
-        // TODO: remove name feedback in each individual function
-        messages.push(format!("{}", path.to_str().unwrap().bold().italic()));
         if args.normalize_tracknumber {
             if let Some(message) = normalize_tracknumber(path, run) {
-                messages.push(format!("\tNorm. num.: {}", message));
+                buffer.push(format!("\tNorm. num.: {}", message));
             }
         }
         if args.normalize_year {
             if let Some(message) = normalize_year(path, run) {
-                messages.push(format!("\tNorm. year: {}", message));
+                buffer.push(format!("\tNorm. year: {}", message));
             }
         }
         if args.clean_others {
             if let Some(message) = clean_others(path, run) {
-                messages.push(format!("\tRemove junk: {}", message));
+                buffer.push(format!("\tRemove junk: {}", message));
             }
         }
         if args.set_genre {
             if let Some(message) = set_genre(path, &args.genre, run) {
-                messages.push(format!("\tSet genre: {}", message));
+                buffer.push(format!("\tSet genre: {}", message));
             }
         }
         if args.set_year {
             if let Some(message) = set_year(path, args.year, run) {
-                messages.push(format!("\tSet year: {}", message));
+                buffer.push(format!("\tSet year: {}", message));
             }
         }
         if args.rename {
             if let Some(message) = rename(path, run) {
-                messages.push(format!("\tRename: {}", message));
+                buffer.push(format!("\tRename: {}", message));
             }
+        }
+
+        if !buffer.is_empty() {
+            messages.push(format!("{}", path.to_str().unwrap().bold().italic()));
+            messages.append(&mut buffer);
         }
     }
 
     if !quiet {
         if messages.is_empty() {
-            sp.message("There's nothing to do, exiting now".to_string());
+            println!("There's nothing to do, exiting now");
         } else {
             sp.message("Done !".to_string());
             Pager::with_pager("less -r").setup();
