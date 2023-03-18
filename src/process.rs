@@ -3,123 +3,109 @@ use std::path::Path;
 
 use colored::Colorize;
 use metaflac;
+use metaflac::block::VorbisComment;
 use regex::Regex;
 use titlecase::titlecase;
 use unic_normal::StrNormalForm;
 
-pub fn normalize_title(path: &Path, run: bool) -> Option<String> {
-    // Unwrap name
-    let name = path
-        .file_name()
-        .expect("Path should be a file")
-        .to_str()
-        .unwrap();
+pub enum ProcessResult {
+    Nothing,
+    ActionResult { old: String, new: String },
+}
 
-    // Read metadata
-    let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
-        return Some(format!("{}", name.red()));
-    };
-    let comments = tag.vorbis_comments_mut();
-    let Some(old_title_vec) = comments.get("TITLE") else {
-        return Some(format!("{}", name.red()));
-    };
-    let Some(old_title) = old_title_vec.iter().next() else  {
-        return Some(format!("{}", name.red()));
-    };
+impl ProcessResult {
+    pub fn to_string(&self, prefix: &str, file_name: &String, run: bool) -> String {
+        match self {
+            Self::Nothing => format!("{} (unchanged): {}", prefix, file_name.clone().normal()),
+            Self::ActionResult { old, new } => {
+                format!(
+                    "{}: {} -> {}",
+                    prefix,
+                    old,
+                    if !run { new.yellow() } else { new.green() },
+                )
+            }
+        }
+    }
+}
 
-    // Normalize track name
-    let new_title = titlecase(old_title);
+pub fn normalize_tracknumber(comments: &mut VorbisComment) -> Option<ProcessResult> {
+    let old_number = comments.get("TRACKNUMBER")?.iter().next()?;
 
-    // Skip if no changes has to be done
-    if old_title.nfd().eq(new_title.nfd()) {
-        return None;
+    let new_number = old_number.parse::<u32>().ok()?;
+
+    // Return if no changes would be made
+    if *old_number == new_number.to_string() {
+        return Some(ProcessResult::Nothing);
     }
 
-    // Dry run
-    if !run {
-        return Some(format!(
-            "{} -> {}",
-            old_title.strikethrough(),
-            new_title.to_string().yellow()
-        ));
-    }
-
-    // Save changes
-    let result = format!(
-        "{} -> {}",
-        old_title.strikethrough(),
-        new_title.to_string().green()
-    );
-    comments.set_title(vec![new_title]);
-    let Ok(_) = tag.save() else {
-        return Some(format!("{}", name.red()));
+    let result = ProcessResult::ActionResult {
+        old: old_number.to_string(),
+        new: new_number.to_string(),
     };
+    comments.set_track(new_number);
     return Some(result);
 }
 
-pub fn set_genre(path: &Path, genre: &String, run: bool) -> Option<String> {
-    // Unwrap name
-    let name = path
-        .file_name()
-        .expect("Path should be a file")
-        .to_str()
-        .unwrap();
+pub fn normalize_title(comments: &mut VorbisComment) -> Option<ProcessResult> {
+    let old_title = comments.get("TITLE")?.iter().next()?;
 
-    // Read metadata
-    let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
-        return Some(format!("{}", name.red()));
+    let new_title = titlecase(old_title);
+
+    // Compare using nfd (faster than nfc)
+    if old_title.nfd().eq(new_title.nfd()) {
+        return Some(ProcessResult::Nothing);
+    }
+
+    let result = ProcessResult::ActionResult {
+        old: old_title.to_owned(),
+        new: new_title.to_owned(),
     };
-    let comments = tag.vorbis_comments_mut();
-    let Some(old_genre_vec) = comments.get("GENRE") else {
-        return Some(format!("{}", name.red()));
+    comments.set_title(vec![new_title]);
+    return Some(result);
+}
+
+pub fn normalize_year(comments: &mut VorbisComment) -> Option<ProcessResult> {
+    let old_date = comments.get("DATE")?.iter().next()?;
+
+    let new_date = Regex::new(r"(\d{4})")
+        .ok()?
+        .captures(old_date)?
+        .get(1)
+        .map_or(old_date.clone(), |s| s.as_str().to_string());
+
+    // Return if no changes will be made
+    if *old_date == new_date {
+        return Some(ProcessResult::Nothing);
+    }
+
+    let result = ProcessResult::ActionResult {
+        old: old_date.to_owned(),
+        new: new_date.to_owned(),
     };
-    let Some(old_genre) = old_genre_vec.iter().next() else  {
-        return Some(format!("{}", name.red()));
-    };
+    comments.set("DATE", vec![new_date]);
+    return Some(result);
+}
+
+pub fn set_genre(comments: &mut VorbisComment, genre: &String) -> Option<ProcessResult> {
+    let old_genre = comments.get("GENRE")?.iter().next()?;
 
     let new_genre = genre;
 
     // Skip if no changes has to be done
     if old_genre == new_genre {
-        return None;
+        return Some(ProcessResult::Nothing);
     }
 
-    // Dry run
-    if !run {
-        return Some(format!(
-            "{} -> {}",
-            old_genre.strikethrough(),
-            new_genre.to_string().yellow()
-        ));
-    }
-
-    // Save changes
-    let result = format!(
-        "{} -> {}",
-        old_genre.strikethrough(),
-        new_genre.to_string().green()
-    );
-    comments.set_genre(vec![new_genre]);
-    let Ok(_) = tag.save() else {
-        return Some(format!("{}", name.red()));
+    let result = ProcessResult::ActionResult {
+        old: old_genre.to_owned(),
+        new: new_genre.to_owned(),
     };
+    comments.set_genre(vec![new_genre]);
     return Some(result);
 }
 
-pub fn clean_others(path: &Path, run: bool) -> Option<String> {
-    // Read filename
-    let name = path
-        .file_name()
-        .expect("Path should be a file")
-        .to_str()
-        .unwrap();
-
-    // Read metadata
-    let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
-        return Some(format!("{}", name.red()));
-    };
-    let comments = tag.vorbis_comments_mut();
-
+pub fn clean_others(comments: &mut VorbisComment) -> Option<ProcessResult> {
     let has_comment = comments
         .get("COMMENT")
         .and_then(|v| v.iter().next())
@@ -131,26 +117,36 @@ pub fn clean_others(path: &Path, run: bool) -> Option<String> {
 
     // Return if nothing needs to be done
     if !has_lyrics && !has_comment {
-        return None;
+        return Some(ProcessResult::Nothing);
     }
 
-    // Dry run
-    if !run {
-        return Some(format!("{}", name.yellow()));
-    }
-
-    // Save changes
-    let result = format!("{}", name.green());
+    let result = ProcessResult::ActionResult {
+        old: "".to_string(),
+        new: "Took out the string".to_string(),
+    };
     comments.set("COMMENT", vec![""]);
     comments.set("LYRICS", vec![""]);
-    let Ok(_) = tag.save() else {
-        return Some(format!("{}", name.red()));
-    };
     return Some(result);
 }
 
-// FIXME
-pub fn rename(path: &Path, run: bool) -> Option<String> {
+pub fn set_year(comments: &mut VorbisComment, year: u32) -> Option<ProcessResult> {
+    let old_date = comments.get("DATE")?.iter().next()?;
+
+    let new_date = year;
+
+    // Return if no changes will be made
+    if *old_date == new_date.to_string() {
+        return Some(ProcessResult::Nothing);
+    }
+    let result = ProcessResult::ActionResult {
+        old: old_date.to_owned(),
+        new: new_date.to_string(),
+    };
+    comments.set("DATE", vec![new_date.to_string()]);
+    return Some(result);
+}
+
+pub fn rename(path: &Path, comments: &mut VorbisComment, run: bool) -> Option<ProcessResult> {
     // Unwrap name, extension, and parent path
     let old_name = path
         .file_name()
@@ -164,23 +160,8 @@ pub fn rename(path: &Path, run: bool) -> Option<String> {
         .unwrap();
     let parent = path.parent().expect("Parent folder should be vaild");
 
-    // Read metadata
-    let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
-        return Some(format!("{}", old_name.red()));
-    };
-    let comments = tag.vorbis_comments_mut();
-    let Some(tracknumber_vec) = comments.get("TRACKNUMBER") else {
-        return Some(format!("{}", old_name.red()));
-    };
-    let Some(tracknumber) = tracknumber_vec.iter().next() else  {
-        return Some(format!("{}", old_name.red()));
-    };
-    let Some(title_vec) = comments.get("TITLE") else {
-        return Some(format!("{}", old_name.red()));
-    };
-    let Some(title) = title_vec.iter().next() else  {
-        return Some(format!("{}", old_name.red()));
-    };
+    let tracknumber = comments.get("TRACKNUMBER")?.iter().next()?;
+    let title = comments.get("TITLE")?.iter().next()?;
 
     // Create new name
     let new_name = format!(
@@ -192,181 +173,16 @@ pub fn rename(path: &Path, run: bool) -> Option<String> {
 
     // Skip if no changes needs to be done
     if old_name.nfd().eq(new_name.nfd()) {
-        return None;
+        return Some(ProcessResult::Nothing);
     }
 
-    // Dry run
-    if !run {
-        return Some(format!(
-            "{} -> {}",
-            old_name.strikethrough(),
-            new_name.yellow()
-        ));
+    let result = ProcessResult::ActionResult {
+        old: old_name.to_owned(),
+        new: new_name.to_owned(),
+    };
+    if run {
+        let new_path = parent.join(&new_name);
+        fs::rename(&path, &new_path).unwrap();
     }
-
-    // Save changes
-    let new_path = parent.join(&new_name);
-    let Ok(_) = fs::rename(path, &new_path) else {
-        return Some(format!("{}", old_name.red()));
-    };
-    return Some(format!(
-        "{} -> {}",
-        old_name.strikethrough(),
-        new_name.green()
-    ));
-}
-
-pub fn set_year(path: &Path, year: u32, run: bool) -> Option<String> {
-    let name = path
-        .file_name()
-        .expect("Path should be a file")
-        .to_str()
-        .unwrap();
-
-    // Read year tag
-    let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
-        return Some(format!("{}", name.red()));
-    };
-    let comments = tag.vorbis_comments_mut();
-    let Some(old_date_vec) = comments.get("DATE") else {
-        return Some(format!("{}", name.red()));
-    };
-    let Some(old_date) = old_date_vec.iter().next() else  {
-        return Some(format!("{}", name.red()));
-    };
-
-    // Bind new date
-    let new_date = year;
-
-    // Return if no changes will be made
-    if *old_date == new_date.to_string() {
-        return None;
-    }
-
-    // Dry run
-    if !run {
-        return Some(format!(
-            "{} -> {}",
-            old_date.strikethrough(),
-            new_date.to_string().yellow()
-        ));
-    }
-
-    // Save changes
-    let result = format!(
-        "{} -> {}",
-        old_date.strikethrough(),
-        new_date.to_string().green()
-    );
-    comments.set("DATE", vec![new_date.to_string()]);
-    let Ok(_) = tag.save() else {
-        return Some(format!("{}", name.red()));
-    };
-    return Some(result);
-}
-
-pub fn normalize_year(path: &Path, run: bool) -> Option<String> {
-    let name = path
-        .file_name()
-        .expect("Path should be a file")
-        .to_str()
-        .unwrap();
-
-    // Read year tag
-    let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
-                return Some(format!("{}", name.red()));
-    };
-    let comments = tag.vorbis_comments_mut();
-    let Some(old_date_vec) = comments.get("DATE") else {
-                return Some(format!("{}", name.red()));
-    };
-    let Some(old_date) = old_date_vec.iter().next() else  {
-                return Some(format!("{}", name.red()));
-    };
-
-    // Parse into new year
-    let re = Regex::new(r"(\d{4})").unwrap();
-    let Some(caps) = re.captures(old_date) else {
-                return Some(format!("Failed to parse year with regex: {}", name.red()));
-    };
-    let new_date = caps
-        .get(1)
-        .map_or(old_date.clone(), |s| s.as_str().to_owned());
-
-    // Return if no changes will be made
-    if *old_date == new_date {
-        return None;
-    }
-
-    // Dry run
-    if !run {
-        return Some(format!(
-            "{} -> {}",
-            old_date.strikethrough(),
-            new_date.to_string().yellow()
-        ));
-    }
-
-    // Save changes
-    let result = format!(
-        "{} -> {}",
-        old_date.strikethrough(),
-        new_date.to_string().green()
-    );
-    comments.set("DATE", vec![new_date]);
-    let Ok(_) = tag.save() else {
-        return Some(format!("{}", name.red()));
-    };
-    return Some(result);
-}
-
-pub fn normalize_tracknumber(path: &Path, run: bool) -> Option<String> {
-    let name = path
-        .file_name()
-        .expect("Path should be a file")
-        .to_str()
-        .unwrap();
-
-    // Obtain old number
-    let Ok(mut tag) = metaflac::Tag::read_from_path(path) else {
-        return Some(format!("{}", name.red()));
-    };
-    let comments = tag.vorbis_comments_mut();
-    let Some(old_number_vec) = comments.get("TRACKNUMBER") else {
-                return Some(format!("{}", name.red()));
-    };
-    let Some(old_number) = old_number_vec.iter().next() else  {
-        return Some(format!("{}", name.red()));
-    };
-
-    // Parse into new number
-    let Ok(new_number) = old_number.parse::<u32>() else {
-        return Some(format!("Failed to force track number as int {}", name.red()));
-    };
-
-    // Return if no changes would be made
-    if *old_number == new_number.to_string() {
-        return None;
-    }
-
-    // Dry run
-    if !run {
-        return Some(format!(
-            "{} -> {}",
-            old_number.strikethrough(),
-            new_number.to_string().yellow()
-        ));
-    }
-
-    // Saving the changes
-    let result = format!(
-        "{} -> {}",
-        old_number.strikethrough(),
-        new_number.to_string().green()
-    );
-    comments.set_track(new_number);
-    let Ok(_) = tag.save() else {
-        return Some(format!("{}", name.red()));
-    };
     return Some(result);
 }
