@@ -24,7 +24,6 @@ pub enum Message {
     Nothing,
     ActionResult { old: String, new: String },
 }
-
 impl Message {
     pub fn to_string(&self, prefix: &str, file_name: &String, run: bool) -> String {
         match self {
@@ -43,18 +42,16 @@ impl Message {
 
 #[derive(Debug)]
 pub enum Error {
-    LoadFileError(&'static str),
-    ParseError(&'static str),
-    TagLoadError(&'static str),
+    FileLoadError(&'static str),
     TagParseError(&'static str),
+    TagLoadError(&'static str),
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::LoadFileError(msg) => write!(f, "Failed to load file: {}", msg),
-            Self::ParseError(msg) => write!(f, "Failed to parse: {}", msg),
+            Self::FileLoadError(msg) => write!(f, "Failed to load file: {}", msg),
+            Self::TagParseError(msg) => write!(f, "Failed to parse: {}", msg),
             Self::TagLoadError(msg) => write!(f, "Failed to load tag: {}", msg),
-            Self::TagParseError(msg) => write!(f, "Failed to parse tag: {}", msg),
         }
     }
 }
@@ -116,7 +113,7 @@ fn normalize_year(comments: &mut VorbisComment) -> Result<Message, Box<dyn error
 
     let new_date = Regex::new(r"(\d{4})")?
         .captures(old_date)
-        .ok_or(Error::ParseError("parse into new date"))?
+        .ok_or(Error::TagParseError("parse into new date"))?
         .get(1)
         .map_or(old_date.clone(), |s| s.as_str().to_string());
 
@@ -213,17 +210,17 @@ fn rename(
     // Unwrap name, extension, and parent path
     let old_name = path
         .file_name()
-        .ok_or(Error::LoadFileError("can't get filename"))?
+        .ok_or(Error::FileLoadError("can't get filename"))?
         .to_str()
-        .ok_or(Error::LoadFileError("can't get filename"))?;
+        .ok_or(Error::FileLoadError("can't get filename"))?;
     let ext = path
         .extension()
-        .ok_or(Error::LoadFileError("file extension not present"))?
+        .ok_or(Error::FileLoadError("file extension not present"))?
         .to_str()
-        .ok_or(Error::LoadFileError("can't load file extension"))?;
+        .ok_or(Error::FileLoadError("can't load file extension"))?;
     let parent = path
         .parent()
-        .ok_or(Error::LoadFileError("Parent folder isn't valid"))?;
+        .ok_or(Error::FileLoadError("Parent folder isn't valid"))?;
 
     let tracknumber = comments
         .get("TRACKNUMBER")
@@ -272,9 +269,9 @@ fn worker(
     let path = entry.path();
     let file_name = path
         .file_name()
-        .ok_or(Error::LoadFileError("filename"))?
+        .ok_or(Error::FileLoadError("filename"))?
         .to_str()
-        .ok_or(Error::LoadFileError("filename"))?
+        .ok_or(Error::FileLoadError("filename"))?
         .to_string();
 
     sp.lock()
@@ -325,7 +322,7 @@ fn worker(
 }
 
 pub fn run(args: &parser::Args, sp: &Arc<Mutex<SpinnerHandle>>) -> Mutex<Vec<String>> {
-    let mut messages: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let messages: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
     let mut entry_iter = WalkDir::new(Path::new(&args.path))
         .into_iter()
@@ -340,14 +337,6 @@ pub fn run(args: &parser::Args, sp: &Arc<Mutex<SpinnerHandle>>) -> Mutex<Vec<Str
             .collect::<Vec<_>>()
             .par_iter()
             .for_each(|entry| {
-                let file_name = entry
-                    .path()
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .to_string();
-
                 let message = match worker(entry, &args, &sp) {
                     Ok(msg) => msg.join("\n"),
                     Err(err) => err.to_string().red().to_string(),
