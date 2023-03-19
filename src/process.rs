@@ -222,10 +222,12 @@ fn rename(
         old: old_name.to_owned(),
         new: new_name.to_owned(),
     };
+
     if run {
         let new_path = parent.join(&new_name);
         fs::rename(&path, &new_path).unwrap();
     }
+
     return Ok(result);
 }
 

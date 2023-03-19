@@ -21,6 +21,7 @@ fn main() {
     let messages = process::run(&args, &sp);
 
     // HACK: manage to change the text of the spinner
+    // sp.lock().unwrap().update("Done!".to_string());
     println!("\nDone!");
 
     if !args.quiet {
