@@ -11,11 +11,10 @@ use colored::Colorize;
 use metaflac;
 use metaflac::block::VorbisComment;
 use regex::Regex;
+use spinner::SpinnerHandle;
 use std::error;
 use titlecase::titlecase;
 use unic_normal::StrNormalForm;
-
-use spinner::SpinnerHandle;
 use walkdir::DirEntry;
 
 use crate::parser;
