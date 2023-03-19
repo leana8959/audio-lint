@@ -21,13 +21,13 @@ use walkdir::DirEntry;
 use crate::parser;
 
 pub enum Message {
-    Nothing,
+    Unchanged,
     ActionResult { old: String, new: String },
 }
 impl Message {
     pub fn to_string(&self, prefix: &str, file_name: &String, run: bool) -> String {
         match self {
-            Self::Nothing => format!("{} (unchanged): {}", prefix, file_name.clone().normal()),
+            Self::Unchanged => format!("{} (unchanged): {}", prefix, file_name.clone().normal()),
             Self::ActionResult { old, new } => {
                 format!(
                     "{}: {} -> {}",
@@ -69,7 +69,7 @@ fn normalize_tracknumber(comments: &mut VorbisComment) -> Result<Message, Box<dy
 
     // Return if no changes would be made
     if *old_number == new_number.to_string() {
-        return Ok(Message::Nothing);
+        return Ok(Message::Unchanged);
     }
 
     let result = Message::ActionResult {
@@ -92,7 +92,7 @@ fn normalize_title(comments: &mut VorbisComment) -> Result<Message, Box<dyn erro
 
     // Compare using nfd (faster than nfc)
     if old_title.nfd().eq(new_title.nfd()) {
-        return Ok(Message::Nothing);
+        return Ok(Message::Unchanged);
     }
 
     let result = Message::ActionResult {
@@ -119,7 +119,7 @@ fn normalize_year(comments: &mut VorbisComment) -> Result<Message, Box<dyn error
 
     // Return if no changes will be made
     if *old_date == new_date {
-        return Ok(Message::Nothing);
+        return Ok(Message::Unchanged);
     }
 
     let result = Message::ActionResult {
@@ -145,7 +145,7 @@ fn set_genre(
 
     // Skip if no changes has to be done
     if old_genre == new_genre {
-        return Ok(Message::Nothing);
+        return Ok(Message::Unchanged);
     }
 
     let result = Message::ActionResult {
@@ -168,7 +168,7 @@ fn clean_others(comments: &mut VorbisComment) -> Result<Message, Box<dyn error::
 
     // Return if nothing needs to be done
     if !has_lyrics && !has_comment {
-        return Ok(Message::Nothing);
+        return Ok(Message::Unchanged);
     }
 
     let result = Message::ActionResult {
@@ -192,7 +192,7 @@ fn set_year(comments: &mut VorbisComment, year: u32) -> Result<Message, Box<dyn 
 
     // Return if no changes will be made
     if *old_date == new_date.to_string() {
-        return Ok(Message::Nothing);
+        return Ok(Message::Unchanged);
     }
     let result = Message::ActionResult {
         old: old_date.to_owned(),
@@ -245,7 +245,7 @@ fn rename(
 
     // Skip if no changes needs to be done
     if old_name.nfd().eq(new_name.nfd()) {
-        return Ok(Message::Nothing);
+        return Ok(Message::Unchanged);
     }
 
     let result = Message::ActionResult {
