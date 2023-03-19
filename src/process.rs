@@ -19,18 +19,19 @@ use walkdir::DirEntry;
 
 use crate::parser;
 
-pub enum Message {
-    Unchanged,
-    ActionResult { old: String, new: String },
+enum Message {
+    None,
+    Some { old: String, new: String },
 }
 impl Message {
-    pub fn to_string(&self, prefix: &str, file_name: &String, run: bool) -> String {
+    fn to_string(&self, prefix: &str, file_name: &String, run: bool) -> String {
         match self {
-            Self::Unchanged => format!("{} (unchanged): {}", prefix, file_name.clone().normal()),
-            Self::ActionResult { old, new } => {
+            Self::None => format!("{} (unchanged): {}", prefix, file_name.clone().normal()),
+            Self::Some { old, new } => {
                 format!(
-                    "{}: {} -> {}",
+                    "{}: {} {} -> {}",
                     prefix,
+                    file_name,
                     old,
                     if !run { new.yellow() } else { new.green() },
                 )
@@ -40,10 +41,10 @@ impl Message {
 }
 
 #[derive(Debug)]
-pub enum Error {
-    FileLoadError(&'static str),
-    TagParseError(&'static str),
-    TagLoadError(&'static str),
+enum Error {
+    FileLoadError(String),
+    TagParseError(String),
+    TagLoadError(String),
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -56,103 +57,91 @@ impl fmt::Display for Error {
 }
 impl error::Error for Error {}
 
-fn normalize_tracknumber(comments: &mut VorbisComment) -> Result<Message, Box<dyn error::Error>> {
-    let old_number = comments
-        .get("TRACKNUMBER")
-        .ok_or(Error::TagLoadError("load tracknumber"))?
+fn modify_tag<F, G>(
+    comments: &mut VorbisComment,
+    field_name: &'static str,
+    transform: F,
+    is_different: G,
+) -> Result<Message, Box<dyn error::Error>>
+where
+    F: Fn(&String) -> Result<String, Box<dyn error::Error>>,
+    G: Fn(&String, &String) -> bool,
+{
+    let old = comments
+        .get(&field_name)
+        .ok_or(Error::TagLoadError(format!("load {}", field_name)))?
         .iter()
         .next()
-        .ok_or(Error::TagLoadError("load tracknumber"))?;
+        .ok_or(Error::TagLoadError(format!("load {}", field_name)))?;
 
-    let new_number = old_number.parse::<u32>()?;
+    let new = transform(&old)?;
 
-    // Return if no changes would be made
-    if *old_number == new_number.to_string() {
-        return Ok(Message::Unchanged);
+    if is_different(&old, &new) {
+        return Ok(Message::None);
     }
 
-    let result = Message::ActionResult {
-        old: old_number.to_string(),
-        new: new_number.to_string(),
+    let msg = Message::Some {
+        old: old.to_owned(),
+        new: new.to_owned(),
     };
-    comments.set_track(new_number);
-    return Ok(result);
+
+    comments.set(field_name, vec![new]);
+
+    Ok(msg)
+}
+
+fn normalize_tracknumber(comments: &mut VorbisComment) -> Result<Message, Box<dyn error::Error>> {
+    modify_tag(
+        comments,
+        "TRACKNUMBER",
+        |old| Ok(old.parse::<u32>()?.to_string()),
+        |old, new| old == new,
+    )
 }
 
 fn normalize_title(comments: &mut VorbisComment) -> Result<Message, Box<dyn error::Error>> {
-    let old_title = comments
-        .get("TITLE")
-        .ok_or(Error::TagLoadError("load title"))?
-        .iter()
-        .next()
-        .ok_or(Error::TagLoadError("load title"))?;
-
-    let new_title = titlecase(old_title);
-
-    // Compare using nfd (faster than nfc)
-    if old_title.nfd().eq(new_title.nfd()) {
-        return Ok(Message::Unchanged);
-    }
-
-    let result = Message::ActionResult {
-        old: old_title.to_owned(),
-        new: new_title.to_owned(),
-    };
-    comments.set_title(vec![new_title]);
-    return Ok(result);
+    modify_tag(
+        comments,
+        "TITLE",
+        |old| Ok(titlecase(old)),
+        |old, new| old.nfd().eq(new.nfd()),
+    )
 }
 
 fn normalize_year(comments: &mut VorbisComment) -> Result<Message, Box<dyn error::Error>> {
-    let old_date = comments
-        .get("DATE")
-        .ok_or(Error::TagLoadError("load date"))?
-        .iter()
-        .next()
-        .ok_or(Error::TagLoadError("load date"))?;
-
-    let new_date = Regex::new(r"(\d{4})")?
-        .captures(old_date)
-        .ok_or(Error::TagParseError("parse into new date"))?
-        .get(1)
-        .map_or(old_date.clone(), |s| s.as_str().to_string());
-
-    // Return if no changes will be made
-    if *old_date == new_date {
-        return Ok(Message::Unchanged);
-    }
-
-    let result = Message::ActionResult {
-        old: old_date.to_owned(),
-        new: new_date.to_owned(),
-    };
-    comments.set("DATE", vec![new_date]);
-    return Ok(result);
+    modify_tag(
+        comments,
+        "DATE",
+        |old| {
+            Ok(Regex::new(r"(\d{4})")?
+                .captures(old)
+                .ok_or(Error::TagParseError("parse into new date".to_string()))?
+                .get(1)
+                .map_or(old.clone(), |s| s.as_str().to_string()))
+        },
+        |old, new| old == new,
+    )
 }
 
 fn set_genre(
     comments: &mut VorbisComment,
     genre: &String,
 ) -> Result<Message, Box<dyn error::Error>> {
-    let old_genre = comments
-        .get("GENRE")
-        .ok_or(Error::TagLoadError("load genre"))?
-        .iter()
-        .next()
-        .ok_or(Error::TagLoadError("load genre"))?;
+    modify_tag(
+        comments,
+        "GENRE",
+        |_| Ok(genre.to_owned()),
+        |old, new| old == new,
+    )
+}
 
-    let new_genre = genre;
-
-    // Skip if no changes has to be done
-    if old_genre == new_genre {
-        return Ok(Message::Unchanged);
-    }
-
-    let result = Message::ActionResult {
-        old: old_genre.to_owned(),
-        new: new_genre.to_owned(),
-    };
-    comments.set_genre(vec![new_genre]);
-    return Ok(result);
+fn set_year(comments: &mut VorbisComment, year: u32) -> Result<Message, Box<dyn error::Error>> {
+    modify_tag(
+        comments,
+        "DATE",
+        |_| Ok(year.to_string()),
+        |old, new| old == new,
+    )
 }
 
 fn clean_others(comments: &mut VorbisComment) -> Result<Message, Box<dyn error::Error>> {
@@ -167,37 +156,15 @@ fn clean_others(comments: &mut VorbisComment) -> Result<Message, Box<dyn error::
 
     // Return if nothing needs to be done
     if !has_lyrics && !has_comment {
-        return Ok(Message::Unchanged);
+        return Ok(Message::None);
     }
 
-    let result = Message::ActionResult {
+    let result = Message::Some {
         old: "".to_string(),
         new: "Took out the string".to_string(),
     };
     comments.set("COMMENT", vec![""]);
     comments.set("LYRICS", vec![""]);
-    return Ok(result);
-}
-
-fn set_year(comments: &mut VorbisComment, year: u32) -> Result<Message, Box<dyn error::Error>> {
-    let old_date = comments
-        .get("DATE")
-        .ok_or(Error::TagLoadError("load date"))?
-        .iter()
-        .next()
-        .ok_or(Error::TagLoadError("load date"))?;
-
-    let new_date = year;
-
-    // Return if no changes will be made
-    if *old_date == new_date.to_string() {
-        return Ok(Message::Unchanged);
-    }
-    let result = Message::ActionResult {
-        old: old_date.to_owned(),
-        new: new_date.to_string(),
-    };
-    comments.set("DATE", vec![new_date.to_string()]);
     return Ok(result);
 }
 
@@ -209,30 +176,34 @@ fn rename(
     // Unwrap name, extension, and parent path
     let old_name = path
         .file_name()
-        .ok_or(Error::FileLoadError("can't get filename"))?
+        .ok_or(Error::FileLoadError("can't get filename".to_string()))?
         .to_str()
-        .ok_or(Error::FileLoadError("can't get filename"))?;
+        .ok_or(Error::FileLoadError("can't get filename".to_string()))?;
     let ext = path
         .extension()
-        .ok_or(Error::FileLoadError("file extension not present"))?
+        .ok_or(Error::FileLoadError(
+            "file extension not present".to_string(),
+        ))?
         .to_str()
-        .ok_or(Error::FileLoadError("can't load file extension"))?;
-    let parent = path
-        .parent()
-        .ok_or(Error::FileLoadError("Parent folder isn't valid"))?;
+        .ok_or(Error::FileLoadError(
+            "can't load file extension".to_string(),
+        ))?;
+    let parent = path.parent().ok_or(Error::FileLoadError(
+        "Parent folder isn't valid".to_string(),
+    ))?;
 
     let tracknumber = comments
         .get("TRACKNUMBER")
-        .ok_or(Error::TagLoadError("can't load tracknumber"))?
+        .ok_or(Error::TagLoadError("can't load tracknumber".to_string()))?
         .iter()
         .next()
-        .ok_or(Error::TagLoadError("can't load tracknumber"))?;
+        .ok_or(Error::TagLoadError("can't load tracknumber".to_string()))?;
     let title = comments
         .get("TITLE")
-        .ok_or(Error::TagLoadError("can't load title"))?
+        .ok_or(Error::TagLoadError("can't load title".to_string()))?
         .iter()
         .next()
-        .ok_or(Error::TagLoadError("can't load title"))?;
+        .ok_or(Error::TagLoadError("can't load title".to_string()))?;
 
     // Create new name
     let new_name = format!(
@@ -244,10 +215,10 @@ fn rename(
 
     // Skip if no changes needs to be done
     if old_name.nfd().eq(new_name.nfd()) {
-        return Ok(Message::Unchanged);
+        return Ok(Message::None);
     }
 
-    let result = Message::ActionResult {
+    let result = Message::Some {
         old: old_name.to_owned(),
         new: new_name.to_owned(),
     };
@@ -268,9 +239,9 @@ fn worker(
     let path = entry.path();
     let file_name = path
         .file_name()
-        .ok_or(Error::FileLoadError("filename"))?
+        .ok_or(Error::FileLoadError("filename".to_string()))?
         .to_str()
-        .ok_or(Error::FileLoadError("filename"))?
+        .ok_or(Error::FileLoadError("filename".to_string()))?
         .to_string();
 
     sp.lock()

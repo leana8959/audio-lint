@@ -20,7 +20,7 @@ fn main() {
 
     let messages = process::run(&args, &sp);
 
-    // TODO: manage to change the text of the spinner
+    // HACK: manage to change the text of the spinner
     println!("\nDone!");
 
     if !args.quiet {
