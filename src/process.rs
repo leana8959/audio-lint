@@ -1,19 +1,31 @@
+use rayon::prelude::IntoParallelRefIterator;
+use rayon::prelude::ParallelIterator;
+use std::ffi;
+use std::fmt;
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
+use walkdir::WalkDir;
 
 use colored::Colorize;
 use metaflac;
 use metaflac::block::VorbisComment;
 use regex::Regex;
+use std::error;
 use titlecase::titlecase;
 use unic_normal::StrNormalForm;
 
-pub enum ProcessResult {
+use spinner::SpinnerHandle;
+use walkdir::DirEntry;
+
+use crate::parser;
+
+pub enum Message {
     Nothing,
     ActionResult { old: String, new: String },
 }
 
-impl ProcessResult {
+impl Message {
     pub fn to_string(&self, prefix: &str, file_name: &String, run: bool) -> String {
         match self {
             Self::Nothing => format!("{} (unchanged): {}", prefix, file_name.clone().normal()),
@@ -29,83 +41,125 @@ impl ProcessResult {
     }
 }
 
-pub fn normalize_tracknumber(comments: &mut VorbisComment) -> Option<ProcessResult> {
-    let old_number = comments.get("TRACKNUMBER")?.iter().next()?;
+#[derive(Debug)]
+pub enum Error {
+    LoadFileError(&'static str),
+    ParseError(&'static str),
+    TagLoadError(&'static str),
+    TagParseError(&'static str),
+}
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::LoadFileError(msg) => write!(f, "Failed to load file: {}", msg),
+            Self::ParseError(msg) => write!(f, "Failed to parse: {}", msg),
+            Self::TagLoadError(msg) => write!(f, "Failed to load tag: {}", msg),
+            Self::TagParseError(msg) => write!(f, "Failed to parse tag: {}", msg),
+        }
+    }
+}
+impl error::Error for Error {}
 
-    let new_number = old_number.parse::<u32>().ok()?;
+fn normalize_tracknumber(comments: &mut VorbisComment) -> Result<Message, Box<dyn error::Error>> {
+    let old_number = comments
+        .get("TRACKNUMBER")
+        .ok_or(Error::TagLoadError("load tracknumber"))?
+        .iter()
+        .next()
+        .ok_or(Error::TagLoadError("load tracknumber"))?;
+
+    let new_number = old_number.parse::<u32>()?;
 
     // Return if no changes would be made
     if *old_number == new_number.to_string() {
-        return Some(ProcessResult::Nothing);
+        return Ok(Message::Nothing);
     }
 
-    let result = ProcessResult::ActionResult {
+    let result = Message::ActionResult {
         old: old_number.to_string(),
         new: new_number.to_string(),
     };
     comments.set_track(new_number);
-    return Some(result);
+    return Ok(result);
 }
 
-pub fn normalize_title(comments: &mut VorbisComment) -> Option<ProcessResult> {
-    let old_title = comments.get("TITLE")?.iter().next()?;
+fn normalize_title(comments: &mut VorbisComment) -> Result<Message, Box<dyn error::Error>> {
+    let old_title = comments
+        .get("TITLE")
+        .ok_or(Error::TagLoadError("load title"))?
+        .iter()
+        .next()
+        .ok_or(Error::TagLoadError("load title"))?;
 
     let new_title = titlecase(old_title);
 
     // Compare using nfd (faster than nfc)
     if old_title.nfd().eq(new_title.nfd()) {
-        return Some(ProcessResult::Nothing);
+        return Ok(Message::Nothing);
     }
 
-    let result = ProcessResult::ActionResult {
+    let result = Message::ActionResult {
         old: old_title.to_owned(),
         new: new_title.to_owned(),
     };
     comments.set_title(vec![new_title]);
-    return Some(result);
+    return Ok(result);
 }
 
-pub fn normalize_year(comments: &mut VorbisComment) -> Option<ProcessResult> {
-    let old_date = comments.get("DATE")?.iter().next()?;
+fn normalize_year(comments: &mut VorbisComment) -> Result<Message, Box<dyn error::Error>> {
+    let old_date = comments
+        .get("DATE")
+        .ok_or(Error::TagLoadError("load date"))?
+        .iter()
+        .next()
+        .ok_or(Error::TagLoadError("load date"))?;
 
-    let new_date = Regex::new(r"(\d{4})")
-        .ok()?
-        .captures(old_date)?
+    let new_date = Regex::new(r"(\d{4})")?
+        .captures(old_date)
+        .ok_or(Error::ParseError("parse into new date"))?
         .get(1)
         .map_or(old_date.clone(), |s| s.as_str().to_string());
 
     // Return if no changes will be made
     if *old_date == new_date {
-        return Some(ProcessResult::Nothing);
+        return Ok(Message::Nothing);
     }
 
-    let result = ProcessResult::ActionResult {
+    let result = Message::ActionResult {
         old: old_date.to_owned(),
         new: new_date.to_owned(),
     };
     comments.set("DATE", vec![new_date]);
-    return Some(result);
+    return Ok(result);
 }
 
-pub fn set_genre(comments: &mut VorbisComment, genre: &String) -> Option<ProcessResult> {
-    let old_genre = comments.get("GENRE")?.iter().next()?;
+fn set_genre(
+    comments: &mut VorbisComment,
+    genre: &String,
+) -> Result<Message, Box<dyn error::Error>> {
+    let old_genre = comments
+        .get("GENRE")
+        .ok_or(Error::TagLoadError("load genre"))?
+        .iter()
+        .next()
+        .ok_or(Error::TagLoadError("load genre"))?;
 
     let new_genre = genre;
 
     // Skip if no changes has to be done
     if old_genre == new_genre {
-        return Some(ProcessResult::Nothing);
+        return Ok(Message::Nothing);
     }
 
-    let result = ProcessResult::ActionResult {
+    let result = Message::ActionResult {
         old: old_genre.to_owned(),
         new: new_genre.to_owned(),
     };
     comments.set_genre(vec![new_genre]);
-    return Some(result);
+    return Ok(result);
 }
 
-pub fn clean_others(comments: &mut VorbisComment) -> Option<ProcessResult> {
+fn clean_others(comments: &mut VorbisComment) -> Result<Message, Box<dyn error::Error>> {
     let has_comment = comments
         .get("COMMENT")
         .and_then(|v| v.iter().next())
@@ -117,51 +171,72 @@ pub fn clean_others(comments: &mut VorbisComment) -> Option<ProcessResult> {
 
     // Return if nothing needs to be done
     if !has_lyrics && !has_comment {
-        return Some(ProcessResult::Nothing);
+        return Ok(Message::Nothing);
     }
 
-    let result = ProcessResult::ActionResult {
+    let result = Message::ActionResult {
         old: "".to_string(),
         new: "Took out the string".to_string(),
     };
     comments.set("COMMENT", vec![""]);
     comments.set("LYRICS", vec![""]);
-    return Some(result);
+    return Ok(result);
 }
 
-pub fn set_year(comments: &mut VorbisComment, year: u32) -> Option<ProcessResult> {
-    let old_date = comments.get("DATE")?.iter().next()?;
+fn set_year(comments: &mut VorbisComment, year: u32) -> Result<Message, Box<dyn error::Error>> {
+    let old_date = comments
+        .get("DATE")
+        .ok_or(Error::TagLoadError("load date"))?
+        .iter()
+        .next()
+        .ok_or(Error::TagLoadError("load date"))?;
 
     let new_date = year;
 
     // Return if no changes will be made
     if *old_date == new_date.to_string() {
-        return Some(ProcessResult::Nothing);
+        return Ok(Message::Nothing);
     }
-    let result = ProcessResult::ActionResult {
+    let result = Message::ActionResult {
         old: old_date.to_owned(),
         new: new_date.to_string(),
     };
     comments.set("DATE", vec![new_date.to_string()]);
-    return Some(result);
+    return Ok(result);
 }
 
-pub fn rename(path: &Path, comments: &mut VorbisComment, run: bool) -> Option<ProcessResult> {
+fn rename(
+    path: &Path,
+    comments: &mut VorbisComment,
+    run: bool,
+) -> Result<Message, Box<dyn error::Error>> {
     // Unwrap name, extension, and parent path
     let old_name = path
         .file_name()
-        .expect("Path should be a file")
+        .ok_or(Error::LoadFileError("can't get filename"))?
         .to_str()
-        .unwrap();
+        .ok_or(Error::LoadFileError("can't get filename"))?;
     let ext = path
         .extension()
-        .expect("Should have a vaild extension")
+        .ok_or(Error::LoadFileError("file extension not present"))?
         .to_str()
-        .unwrap();
-    let parent = path.parent().expect("Parent folder should be vaild");
+        .ok_or(Error::LoadFileError("can't load file extension"))?;
+    let parent = path
+        .parent()
+        .ok_or(Error::LoadFileError("Parent folder isn't valid"))?;
 
-    let tracknumber = comments.get("TRACKNUMBER")?.iter().next()?;
-    let title = comments.get("TITLE")?.iter().next()?;
+    let tracknumber = comments
+        .get("TRACKNUMBER")
+        .ok_or(Error::TagLoadError("can't load tracknumber"))?
+        .iter()
+        .next()
+        .ok_or(Error::TagLoadError("can't load tracknumber"))?;
+    let title = comments
+        .get("TITLE")
+        .ok_or(Error::TagLoadError("can't load title"))?
+        .iter()
+        .next()
+        .ok_or(Error::TagLoadError("can't load title"))?;
 
     // Create new name
     let new_name = format!(
@@ -173,10 +248,10 @@ pub fn rename(path: &Path, comments: &mut VorbisComment, run: bool) -> Option<Pr
 
     // Skip if no changes needs to be done
     if old_name.nfd().eq(new_name.nfd()) {
-        return Some(ProcessResult::Nothing);
+        return Ok(Message::Nothing);
     }
 
-    let result = ProcessResult::ActionResult {
+    let result = Message::ActionResult {
         old: old_name.to_owned(),
         new: new_name.to_owned(),
     };
@@ -184,5 +259,103 @@ pub fn rename(path: &Path, comments: &mut VorbisComment, run: bool) -> Option<Pr
         let new_path = parent.join(&new_name);
         fs::rename(&path, &new_path).unwrap();
     }
-    return Some(result);
+    return Ok(result);
+}
+
+fn worker(
+    entry: &DirEntry,
+    args: &parser::Args,
+    sp: &Arc<Mutex<SpinnerHandle>>,
+) -> Result<Vec<String>, Box<dyn error::Error>> {
+    let run = args.run;
+
+    let path = entry.path();
+    let file_name = path
+        .file_name()
+        .ok_or(Error::LoadFileError("filename"))?
+        .to_str()
+        .ok_or(Error::LoadFileError("filename"))?
+        .to_string();
+
+    sp.lock()
+        .unwrap()
+        .update(path.to_str().unwrap().to_string());
+
+    let mut messages: Vec<String> = Vec::new();
+
+    let mut tag = metaflac::Tag::read_from_path(path)?;
+    let comments = tag.vorbis_comments_mut();
+
+    let mut tag_modified = false;
+
+    if args.normalize_tracknumber {
+        messages.push(normalize_tracknumber(comments)?.to_string("Norm. num", &file_name, run));
+        tag_modified = true;
+    }
+    if args.normalize_title {
+        messages.push(normalize_title(comments)?.to_string("Norm. title", &file_name, run));
+        tag_modified = true;
+    }
+    if args.normalize_year {
+        messages.push(normalize_year(comments)?.to_string("Norm. year", &file_name, run));
+        tag_modified = true;
+    }
+    if args.set_genre {
+        messages.push(set_genre(comments, &args.genre)?.to_string("Set genre", &file_name, run));
+        tag_modified = true;
+    }
+    if args.clean_others {
+        messages.push(clean_others(comments)?.to_string("Remove. junk", &file_name, run));
+        tag_modified = true;
+    }
+    if args.set_year {
+        messages.push(set_year(comments, args.year)?.to_string("Set year", &file_name, run));
+        tag_modified = true;
+    }
+
+    if args.rename {
+        messages.push(rename(path, comments, run)?.to_string("Rename", &file_name, run));
+    }
+
+    if run && tag_modified {
+        tag.save()?
+    }
+
+    Ok(messages)
+}
+
+pub fn run(args: &parser::Args, sp: &Arc<Mutex<SpinnerHandle>>) -> Mutex<Vec<String>> {
+    let mut messages: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    let mut entry_iter = WalkDir::new(Path::new(&args.path))
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension() == Some(&ffi::OsString::from("flac")))
+        .peekable();
+
+    while entry_iter.peek().is_some() {
+        entry_iter
+            .by_ref()
+            .take(10) // TODO: add thread param
+            .collect::<Vec<_>>()
+            .par_iter()
+            .for_each(|entry| {
+                let file_name = entry
+                    .path()
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string();
+
+                let message = match worker(entry, &args, &sp) {
+                    Ok(msg) => msg.join("\n"),
+                    Err(err) => err.to_string().red().to_string(),
+                };
+
+                messages.lock().unwrap().push(message);
+            })
+    }
+
+    messages
 }
