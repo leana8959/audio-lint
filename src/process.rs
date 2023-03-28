@@ -103,7 +103,7 @@ fn normalize_title(comments: &mut VorbisComment) -> Result<Message, Box<dyn erro
     modify_tag(
         comments,
         "TITLE",
-        |old| Ok(titlecase(old)),
+        |old| Ok(titlecase(old.trim())),
         |old, new| old.nfd().eq(new.nfd()),
     )
 }
@@ -269,16 +269,17 @@ fn worker(
         messages.push(normalize_year(comments)?.to_string("Norm. year", &file_name, run));
         tag_modified = true;
     }
+
     if args.set_genre {
         messages.push(set_genre(comments, &args.genre)?.to_string("Set genre", &file_name, run));
         tag_modified = true;
     }
-    if args.clean_others {
-        messages.push(clean_others(comments)?.to_string("Remove. junk", &file_name, run));
-        tag_modified = true;
-    }
     if args.set_year {
         messages.push(set_year(comments, args.year)?.to_string("Set year", &file_name, run));
+        tag_modified = true;
+    }
+    if args.clean_others {
+        messages.push(clean_others(comments)?.to_string("Remove. junk", &file_name, run));
         tag_modified = true;
     }
 
