@@ -76,7 +76,7 @@ impl fmt::Display for EditorError {
         match self {
             Self::Loadfile(msg) => write!(f, "Failed to load file: {}", msg),
             Self::ParseTag(msg) => write!(f, "Failed to parse: {}", msg),
-            Self::LoadTag(msg) => write!(f, "Failed to load tag: {}", msg),
+            Self::LoadTag(msg) => write!(f, "Tag doesn't exist: {}", msg),
         }
     }
 }
@@ -93,10 +93,10 @@ where
     fn modify(&self, comments: &mut VorbisComment) -> Result<Option<Message>, EditorError> {
         let old = comments
             .get(&self.field)
-            .ok_or(EditorError::LoadTag(format!("load {}", self.field)))?
+            .ok_or(EditorError::LoadTag(self.field.to_string()))?
             .iter()
             .next()
-            .ok_or(EditorError::LoadTag(format!("load {}", self.field)))?;
+            .ok_or(EditorError::LoadTag(self.field.to_string()))?;
 
         let new = self.strategy.transform(&old)?;
 
@@ -142,7 +142,8 @@ impl Strategy for NormalizeTracknumber {
 
 impl Strategy for NormalizeTitle {
     fn transform(&self, old: &String) -> Result<String, EditorError> {
-        Ok(titlecase(old.trim()))
+        let re = Regex::new(r"\s{2}").unwrap();
+        Ok(re.replace_all(titlecase(old).trim(), " ").to_string())
     }
     fn changed(&self, old: &String, new: &String) -> bool {
         old.nfd().eq(new.nfd())
@@ -220,16 +221,16 @@ fn rename(
 
     let tracknumber = comments
         .get(TRACKNUMBER)
-        .ok_or(EditorError::LoadTag("can't load tracknumber".to_string()))?
+        .ok_or(EditorError::LoadTag("load tracknumber".to_string()))?
         .iter()
         .next()
-        .ok_or(EditorError::LoadTag("can't load tracknumber".to_string()))?;
+        .ok_or(EditorError::LoadTag("load tracknumber".to_string()))?;
     let title = comments
         .get(TITLE)
-        .ok_or(EditorError::LoadTag("can't load title".to_string()))?
+        .ok_or(EditorError::LoadTag("load title".to_string()))?
         .iter()
         .next()
-        .ok_or(EditorError::LoadTag("can't load title".to_string()))?;
+        .ok_or(EditorError::LoadTag("load title".to_string()))?;
 
     let new_name = format!(
         "{:0>2} - {}.{}",
@@ -326,7 +327,6 @@ pub fn process_entry(
         messages.push(format_message(msg, "Set Year", &file_name, run));
         tag_modified = true;
     }
-
     if args.erase {
         let comment_msg = TagEditor {
             strategy: Erase,

@@ -33,7 +33,7 @@ fn main() {
         .collect::<Vec<String>>()
         .join("\n");
 
-    sp.update("Done!".to_string());
+    sp.message("Done!".to_string());
     sp.close();
 
     if !args.quiet {
