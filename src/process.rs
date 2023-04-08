@@ -18,7 +18,7 @@ use crate::parser;
 const TITLE: &'static str = "TITLE";
 const TRACKNUMBER: &'static str = "TRACKNUMBER";
 const GENRE: &'static str = "GENRE";
-const YEAR: &'static str = "YEAR";
+const YEAR: &'static str = "DATE";
 const COMMENT: &'static str = "COMMENT";
 const LYRICS: &'static str = "LYRICS";
 
@@ -27,10 +27,15 @@ struct Message {
     new: String,
 }
 
+#[rustfmt::skip]
 fn format_message(msg: Option<Message>, strategy: &str, file_name: &String, run: bool) -> String {
     match msg {
         None => format!("{} (unchanged): {}", strategy, file_name.clone().normal()),
         Some(Message { old, new }) => {
+            let new = {
+                if new == "".to_string() { "[EMPTY]".to_string() }
+                else { new }
+            };
             format!(
                 "{}: {} {} -> {}",
                 strategy,
@@ -120,10 +125,10 @@ struct NormalizeTitle;
 struct NormalizeYear;
 struct Erase;
 struct SetGenre {
-    genre: String,
+    genre: Option<String>,
 }
 struct SetYear {
-    year: String,
+    year: Option<u32>,
 }
 
 impl Strategy for NormalizeTracknumber {
@@ -168,7 +173,10 @@ impl Strategy for Erase {
 
 impl Strategy for SetGenre {
     fn transform(&self, _old: &String) -> Result<String, EditorError> {
-        Ok(self.genre.to_owned())
+        match &self.genre {
+            Some(genre) => Ok(genre.to_owned()),
+            None => Ok("".to_string()),
+        }
     }
     fn changed(&self, old: &String, new: &String) -> bool {
         old == new
@@ -177,7 +185,10 @@ impl Strategy for SetGenre {
 
 impl Strategy for SetYear {
     fn transform(&self, _old: &String) -> Result<String, EditorError> {
-        Ok(self.year.to_string())
+        match self.year {
+            Some(year) => Ok(year.to_string()),
+            None => Ok("".to_string()),
+        }
     }
     fn changed(&self, old: &String, new: &String) -> bool {
         old == new
@@ -308,9 +319,7 @@ pub fn process_entry(
     }
     if args.set_year {
         let msg = TagEditor {
-            strategy: SetYear {
-                year: args.year.to_string(),
-            },
+            strategy: SetYear { year: args.year },
             field: YEAR,
         }
         .modify(comments)?;
@@ -318,7 +327,7 @@ pub fn process_entry(
         tag_modified = true;
     }
 
-    if args.clean_others {
+    if args.erase {
         let comment_msg = TagEditor {
             strategy: Erase,
             field: COMMENT,
