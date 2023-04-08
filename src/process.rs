@@ -308,17 +308,18 @@ pub fn process_entry(
         messages.push(format_message(msg, "Set Year", &file_name, run));
         tag_modified = true;
     }
+
+    if args.rename {
+        let msg = rename(path, comments, run)?;
+        messages.push(format_message(msg, "Rename", &file_name, run));
+    }
+
     if args.erase {
         let comment_msg = edit_tag(comments, COMMENT, Erase)?;
         let lyrics_msg = edit_tag(comments, LYRICS, Erase)?;
         messages.push(format_message(comment_msg, "Rem. Comment", &file_name, run));
         messages.push(format_message(lyrics_msg, "Rem. Lyrics", &file_name, run));
         tag_modified = true;
-    }
-
-    if args.rename {
-        let msg = rename(path, comments, run)?;
-        messages.push(format_message(msg, "Rename", &file_name, run));
     }
 
     if run && tag_modified {
