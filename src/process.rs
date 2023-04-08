@@ -15,8 +15,8 @@ use walkdir::DirEntry;
 
 use crate::parser;
 
-const TITLE: &'static str = "TITLE";
 const TRACKNUMBER: &'static str = "TRACKNUMBER";
+const TITLE: &'static str = "TITLE";
 const GENRE: &'static str = "GENRE";
 const YEAR: &'static str = "DATE";
 const COMMENT: &'static str = "COMMENT";
@@ -81,38 +81,35 @@ impl fmt::Display for EditorError {
     }
 }
 
-struct TagEditor<S> {
+fn edit_tag<S>(
+    comments: &mut VorbisComment,
+    field: &str,
     strategy: S,
-    field: &'static str,
-}
-
-impl<S> TagEditor<S>
+) -> Result<Option<Message>, EditorError>
 where
     S: Strategy,
 {
-    fn modify(&self, comments: &mut VorbisComment) -> Result<Option<Message>, EditorError> {
-        let old = comments
-            .get(&self.field)
-            .ok_or(EditorError::LoadTag(self.field.to_string()))?
-            .iter()
-            .next()
-            .ok_or(EditorError::LoadTag(self.field.to_string()))?;
+    let old = comments
+        .get(field)
+        .ok_or(EditorError::LoadTag(field.to_string()))?
+        .iter()
+        .next()
+        .ok_or(EditorError::LoadTag(field.to_string()))?;
 
-        let new = self.strategy.transform(&old)?;
+    let new = strategy.transform(&old)?;
 
-        if self.strategy.changed(&old, &new) {
-            return Ok(None);
-        }
-
-        let msg = Message {
-            old: old.to_owned(),
-            new: new.to_owned(),
-        };
-
-        comments.set(self.field, vec![new]);
-
-        Ok(Some(msg))
+    if strategy.changed(&old, &new) {
+        return Ok(None);
     }
+
+    let msg = Message {
+        old: old.to_owned(),
+        new: new.to_owned(),
+    };
+
+    comments.set(field, vec![new]);
+
+    Ok(Some(msg))
 }
 
 trait Strategy {
@@ -120,9 +117,9 @@ trait Strategy {
     fn changed(&self, old: &String, new: &String) -> bool;
 }
 
-struct NormalizeTracknumber;
-struct NormalizeTitle;
-struct NormalizeYear;
+struct FormatNumber;
+struct FormatText;
+struct FormatYear;
 struct Erase;
 struct SetGenre {
     genre: Option<String>,
@@ -131,7 +128,7 @@ struct SetYear {
     year: Option<u32>,
 }
 
-impl Strategy for NormalizeTracknumber {
+impl Strategy for FormatNumber {
     fn transform(&self, old: &String) -> Result<String, EditorError> {
         Ok(old.parse::<u32>()?.to_string())
     }
@@ -140,7 +137,7 @@ impl Strategy for NormalizeTracknumber {
     }
 }
 
-impl Strategy for NormalizeTitle {
+impl Strategy for FormatText {
     fn transform(&self, old: &String) -> Result<String, EditorError> {
         let re = Regex::new(r"\s{2}").unwrap();
         Ok(re.replace_all(titlecase(old).trim(), " ").to_string())
@@ -150,7 +147,7 @@ impl Strategy for NormalizeTitle {
     }
 }
 
-impl Strategy for NormalizeYear {
+impl Strategy for FormatYear {
     fn transform(&self, old: &String) -> Result<String, EditorError> {
         Ok(Regex::new(r"(\d{4})")?
             .captures(old)
@@ -281,63 +278,39 @@ pub fn process_entry(
     let mut tag_modified = false;
 
     if args.normalize_tracknumber {
-        let msg = TagEditor {
-            strategy: NormalizeTracknumber,
-            field: TRACKNUMBER,
-        }
-        .modify(comments)?;
+        let msg = edit_tag(comments, TRACKNUMBER, FormatNumber)?;
         messages.push(format_message(msg, "Norm. Numb.", &file_name, run));
         tag_modified = true;
     }
     if args.normalize_title {
-        let msg = TagEditor {
-            strategy: NormalizeTitle,
-            field: TITLE,
-        }
-        .modify(comments)?;
+        let msg = edit_tag(comments, TITLE, FormatText)?;
         messages.push(format_message(msg, "Norm. Title", &file_name, run));
         tag_modified = true;
     }
     if args.normalize_year {
-        let msg = TagEditor {
-            strategy: NormalizeYear,
-            field: YEAR,
-        }
-        .modify(comments)?;
+        let msg = edit_tag(comments, YEAR, FormatYear)?;
         messages.push(format_message(msg, "Norm. Year", &file_name, run));
         tag_modified = true;
     }
     if args.set_genre {
-        let msg = TagEditor {
-            strategy: SetGenre {
+        let msg = edit_tag(
+            comments,
+            GENRE,
+            SetGenre {
                 genre: args.genre.clone(),
             },
-            field: GENRE,
-        }
-        .modify(comments)?;
+        )?;
         messages.push(format_message(msg, "Set Genre", &file_name, run));
         tag_modified = true;
     }
     if args.set_year {
-        let msg = TagEditor {
-            strategy: SetYear { year: args.year },
-            field: YEAR,
-        }
-        .modify(comments)?;
+        let msg = edit_tag(comments, YEAR, SetYear { year: args.year })?;
         messages.push(format_message(msg, "Set Year", &file_name, run));
         tag_modified = true;
     }
     if args.erase {
-        let comment_msg = TagEditor {
-            strategy: Erase,
-            field: COMMENT,
-        }
-        .modify(comments)?;
-        let lyrics_msg = TagEditor {
-            strategy: Erase,
-            field: LYRICS,
-        }
-        .modify(comments)?;
+        let comment_msg = edit_tag(comments, COMMENT, Erase)?;
+        let lyrics_msg = edit_tag(comments, LYRICS, Erase)?;
         messages.push(format_message(comment_msg, "Rem. Comment", &file_name, run));
         messages.push(format_message(lyrics_msg, "Rem. Lyrics", &file_name, run));
         tag_modified = true;
