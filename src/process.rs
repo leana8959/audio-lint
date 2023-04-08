@@ -1,11 +1,7 @@
-use rayon::prelude::IntoParallelRefIterator;
-use rayon::prelude::ParallelIterator;
-use std::ffi;
 use std::fmt;
 use std::fs;
+use std::num::ParseIntError;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
-use walkdir::WalkDir;
 
 use colored::Colorize;
 use metaflac;
@@ -19,193 +15,211 @@ use walkdir::DirEntry;
 
 use crate::parser;
 
-enum Message {
-    None,
-    Some { old: String, new: String },
+const TITLE: &'static str = "TITLE";
+const TRACKNUMBER: &'static str = "TRACKNUMBER";
+const GENRE: &'static str = "GENRE";
+const YEAR: &'static str = "YEAR";
+const COMMENT: &'static str = "COMMENT";
+const LYRICS: &'static str = "LYRICS";
+
+struct Message {
+    old: String,
+    new: String,
 }
-impl Message {
-    fn to_string(&self, prefix: &str, file_name: &String, run: bool) -> String {
-        match self {
-            Self::None => format!("{} (unchanged): {}", prefix, file_name.clone().normal()),
-            Self::Some { old, new } => {
-                format!(
-                    "{}: {} {} -> {}",
-                    prefix,
-                    file_name,
-                    old,
-                    if !run { new.yellow() } else { new.green() },
-                )
-            }
+
+fn format_message(msg: Option<Message>, strategy: &str, file_name: &String, run: bool) -> String {
+    match msg {
+        None => format!("{} (unchanged): {}", strategy, file_name.clone().normal()),
+        Some(Message { old, new }) => {
+            format!(
+                "{}: {} {} -> {}",
+                strategy,
+                file_name,
+                old,
+                if !run { new.yellow() } else { new.green() },
+            )
         }
     }
 }
 
 #[derive(Debug)]
-enum Error {
-    FileLoadError(String),
-    TagParseError(String),
-    TagLoadError(String),
+pub enum EditorError {
+    Loadfile(String),
+    LoadTag(String),
+    ParseTag(String),
 }
-impl fmt::Display for Error {
+impl error::Error for EditorError {}
+
+impl From<ParseIntError> for EditorError {
+    fn from(value: ParseIntError) -> Self {
+        Self::LoadTag(value.to_string())
+    }
+}
+impl From<regex::Error> for EditorError {
+    fn from(value: regex::Error) -> Self {
+        Self::LoadTag(value.to_string())
+    }
+}
+impl From<metaflac::Error> for EditorError {
+    fn from(value: metaflac::Error) -> Self {
+        Self::Loadfile(value.to_string())
+    }
+}
+
+impl fmt::Display for EditorError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::FileLoadError(msg) => write!(f, "Failed to load file: {}", msg),
-            Self::TagParseError(msg) => write!(f, "Failed to parse: {}", msg),
-            Self::TagLoadError(msg) => write!(f, "Failed to load tag: {}", msg),
+            Self::Loadfile(msg) => write!(f, "Failed to load file: {}", msg),
+            Self::ParseTag(msg) => write!(f, "Failed to parse: {}", msg),
+            Self::LoadTag(msg) => write!(f, "Failed to load tag: {}", msg),
         }
     }
 }
-impl error::Error for Error {}
 
-fn modify_tag<F, G>(
-    comments: &mut VorbisComment,
-    field_name: &'static str,
-    transform: F,
-    is_different: G,
-) -> Result<Message, Box<dyn error::Error>>
+struct TagEditor<S> {
+    strategy: S,
+    field: &'static str,
+}
+
+impl<S> TagEditor<S>
 where
-    F: Fn(&String) -> Result<String, Box<dyn error::Error>>,
-    G: Fn(&String, &String) -> bool,
+    S: Strategy,
 {
-    let old = comments
-        .get(&field_name)
-        .ok_or(Error::TagLoadError(format!("load {}", field_name)))?
-        .iter()
-        .next()
-        .ok_or(Error::TagLoadError(format!("load {}", field_name)))?;
+    fn modify(&self, comments: &mut VorbisComment) -> Result<Option<Message>, EditorError> {
+        let old = comments
+            .get(&self.field)
+            .ok_or(EditorError::LoadTag(format!("load {}", self.field)))?
+            .iter()
+            .next()
+            .ok_or(EditorError::LoadTag(format!("load {}", self.field)))?;
 
-    let new = transform(&old)?;
+        let new = self.strategy.transform(&old)?;
 
-    if is_different(&old, &new) {
-        return Ok(Message::None);
+        if self.strategy.changed(&old, &new) {
+            return Ok(None);
+        }
+
+        let msg = Message {
+            old: old.to_owned(),
+            new: new.to_owned(),
+        };
+
+        comments.set(self.field, vec![new]);
+
+        Ok(Some(msg))
     }
-
-    let msg = Message::Some {
-        old: old.to_owned(),
-        new: new.to_owned(),
-    };
-
-    comments.set(field_name, vec![new]);
-
-    Ok(msg)
 }
 
-fn normalize_tracknumber(comments: &mut VorbisComment) -> Result<Message, Box<dyn error::Error>> {
-    modify_tag(
-        comments,
-        "TRACKNUMBER",
-        |old| Ok(old.parse::<u32>()?.to_string()),
-        |old, new| old == new,
-    )
+trait Strategy {
+    fn transform(&self, old: &String) -> Result<String, EditorError>;
+    fn changed(&self, old: &String, new: &String) -> bool;
 }
 
-fn normalize_title(comments: &mut VorbisComment) -> Result<Message, Box<dyn error::Error>> {
-    modify_tag(
-        comments,
-        "TITLE",
-        |old| Ok(titlecase(old.trim())),
-        |old, new| old.nfd().eq(new.nfd()),
-    )
+struct NormalizeTracknumber;
+struct NormalizeTitle;
+struct NormalizeYear;
+struct Erase;
+struct SetGenre {
+    genre: String,
+}
+struct SetYear {
+    year: String,
 }
 
-fn normalize_year(comments: &mut VorbisComment) -> Result<Message, Box<dyn error::Error>> {
-    modify_tag(
-        comments,
-        "DATE",
-        |old| {
-            Ok(Regex::new(r"(\d{4})")?
-                .captures(old)
-                .ok_or(Error::TagParseError("parse into new date".to_string()))?
-                .get(1)
-                .map_or(old.clone(), |s| s.as_str().to_string()))
-        },
-        |old, new| old == new,
-    )
-}
-
-fn set_genre(
-    comments: &mut VorbisComment,
-    genre: &String,
-) -> Result<Message, Box<dyn error::Error>> {
-    modify_tag(
-        comments,
-        "GENRE",
-        |_| Ok(genre.to_owned()),
-        |old, new| old == new,
-    )
-}
-
-fn set_year(comments: &mut VorbisComment, year: u32) -> Result<Message, Box<dyn error::Error>> {
-    modify_tag(
-        comments,
-        "DATE",
-        |_| Ok(year.to_string()),
-        |old, new| old == new,
-    )
-}
-
-fn clean_others(comments: &mut VorbisComment) -> Result<Message, Box<dyn error::Error>> {
-    let has_comment = comments
-        .get("COMMENT")
-        .and_then(|v| v.iter().next())
-        .map_or(false, |s| !s.is_empty());
-    let has_lyrics = comments
-        .get("LYRICS")
-        .and_then(|v| v.iter().next())
-        .map_or(false, |s| !s.is_empty());
-
-    // Return if nothing needs to be done
-    if !has_lyrics && !has_comment {
-        return Ok(Message::None);
+impl Strategy for NormalizeTracknumber {
+    fn transform(&self, old: &String) -> Result<String, EditorError> {
+        Ok(old.parse::<u32>()?.to_string())
     }
+    fn changed(&self, old: &String, new: &String) -> bool {
+        old == new
+    }
+}
 
-    let result = Message::Some {
-        old: "".to_string(),
-        new: "Took out the string".to_string(),
-    };
-    comments.set("COMMENT", vec![""]);
-    comments.set("LYRICS", vec![""]);
-    return Ok(result);
+impl Strategy for NormalizeTitle {
+    fn transform(&self, old: &String) -> Result<String, EditorError> {
+        Ok(titlecase(old.trim()))
+    }
+    fn changed(&self, old: &String, new: &String) -> bool {
+        old.nfd().eq(new.nfd())
+    }
+}
+
+impl Strategy for NormalizeYear {
+    fn transform(&self, old: &String) -> Result<String, EditorError> {
+        Ok(Regex::new(r"(\d{4})")?
+            .captures(old)
+            .ok_or(EditorError::ParseTag("parse into new date".to_string()))?
+            .get(1)
+            .map_or(old.clone(), |s| s.as_str().to_string()))
+    }
+    fn changed(&self, old: &String, new: &String) -> bool {
+        old == new
+    }
+}
+
+impl Strategy for Erase {
+    fn transform(&self, _old: &String) -> Result<String, EditorError> {
+        Ok("".to_string())
+    }
+    fn changed(&self, old: &String, _new: &String) -> bool {
+        *old != "".to_string()
+    }
+}
+
+impl Strategy for SetGenre {
+    fn transform(&self, _old: &String) -> Result<String, EditorError> {
+        Ok(self.genre.to_owned())
+    }
+    fn changed(&self, old: &String, new: &String) -> bool {
+        old == new
+    }
+}
+
+impl Strategy for SetYear {
+    fn transform(&self, _old: &String) -> Result<String, EditorError> {
+        Ok(self.year.to_string())
+    }
+    fn changed(&self, old: &String, new: &String) -> bool {
+        old == new
+    }
 }
 
 fn rename(
     path: &Path,
     comments: &mut VorbisComment,
     run: bool,
-) -> Result<Message, Box<dyn error::Error>> {
-    // Unwrap name, extension, and parent path
+) -> Result<Option<Message>, EditorError> {
     let old_name = path
         .file_name()
-        .ok_or(Error::FileLoadError("can't get filename".to_string()))?
+        .ok_or(EditorError::Loadfile("can't get filename".to_string()))?
         .to_str()
-        .ok_or(Error::FileLoadError("can't get filename".to_string()))?;
+        .ok_or(EditorError::Loadfile("can't get filename".to_string()))?;
     let ext = path
         .extension()
-        .ok_or(Error::FileLoadError(
+        .ok_or(EditorError::Loadfile(
             "file extension not present".to_string(),
         ))?
         .to_str()
-        .ok_or(Error::FileLoadError(
+        .ok_or(EditorError::Loadfile(
             "can't load file extension".to_string(),
         ))?;
-    let parent = path.parent().ok_or(Error::FileLoadError(
+    let parent = path.parent().ok_or(EditorError::Loadfile(
         "Parent folder isn't valid".to_string(),
     ))?;
 
     let tracknumber = comments
-        .get("TRACKNUMBER")
-        .ok_or(Error::TagLoadError("can't load tracknumber".to_string()))?
+        .get(TRACKNUMBER)
+        .ok_or(EditorError::LoadTag("can't load tracknumber".to_string()))?
         .iter()
         .next()
-        .ok_or(Error::TagLoadError("can't load tracknumber".to_string()))?;
+        .ok_or(EditorError::LoadTag("can't load tracknumber".to_string()))?;
     let title = comments
-        .get("TITLE")
-        .ok_or(Error::TagLoadError("can't load title".to_string()))?
+        .get(TITLE)
+        .ok_or(EditorError::LoadTag("can't load title".to_string()))?
         .iter()
         .next()
-        .ok_or(Error::TagLoadError("can't load title".to_string()))?;
+        .ok_or(EditorError::LoadTag("can't load title".to_string()))?;
 
-    // Create new name
     let new_name = format!(
         "{:0>2} - {}.{}",
         tracknumber,
@@ -213,12 +227,11 @@ fn rename(
         ext
     );
 
-    // Skip if no changes needs to be done
     if old_name.nfd().eq(new_name.nfd()) {
-        return Ok(Message::None);
+        return Ok(None);
     }
 
-    let result = Message::Some {
+    let result = Message {
         old: old_name.to_owned(),
         new: new_name.to_owned(),
     };
@@ -228,27 +241,25 @@ fn rename(
         fs::rename(&path, &new_path).unwrap();
     }
 
-    return Ok(result);
+    return Ok(Some(result));
 }
 
-fn worker(
+pub fn process_entry(
     entry: &DirEntry,
     args: &parser::Args,
-    sp: &Arc<Mutex<SpinnerHandle>>,
-) -> Result<Vec<String>, Box<dyn error::Error>> {
+    sp: &SpinnerHandle,
+) -> Result<Vec<String>, EditorError> {
     let run = args.run;
 
     let path = entry.path();
     let file_name = path
         .file_name()
-        .ok_or(Error::FileLoadError("filename".to_string()))?
+        .ok_or(EditorError::Loadfile("filename".to_string()))?
         .to_str()
-        .ok_or(Error::FileLoadError("filename".to_string()))?
+        .ok_or(EditorError::Loadfile("filename".to_string()))?
         .to_string();
 
-    sp.lock()
-        .unwrap()
-        .update(path.to_str().unwrap().to_string());
+    sp.update(path.to_str().unwrap().to_string());
 
     let mut messages: Vec<String> = Vec::new();
 
@@ -258,33 +269,74 @@ fn worker(
     let mut tag_modified = false;
 
     if args.normalize_tracknumber {
-        messages.push(normalize_tracknumber(comments)?.to_string("Norm. num", &file_name, run));
+        let msg = TagEditor {
+            strategy: NormalizeTracknumber,
+            field: TRACKNUMBER,
+        }
+        .modify(comments)?;
+        messages.push(format_message(msg, "Norm. Numb.", &file_name, run));
         tag_modified = true;
     }
     if args.normalize_title {
-        messages.push(normalize_title(comments)?.to_string("Norm. title", &file_name, run));
+        let msg = TagEditor {
+            strategy: NormalizeTitle,
+            field: TITLE,
+        }
+        .modify(comments)?;
+        messages.push(format_message(msg, "Norm. Title", &file_name, run));
         tag_modified = true;
     }
     if args.normalize_year {
-        messages.push(normalize_year(comments)?.to_string("Norm. year", &file_name, run));
+        let msg = TagEditor {
+            strategy: NormalizeYear,
+            field: YEAR,
+        }
+        .modify(comments)?;
+        messages.push(format_message(msg, "Norm. Year", &file_name, run));
         tag_modified = true;
     }
-
     if args.set_genre {
-        messages.push(set_genre(comments, &args.genre)?.to_string("Set genre", &file_name, run));
+        let msg = TagEditor {
+            strategy: SetGenre {
+                genre: args.genre.clone(),
+            },
+            field: GENRE,
+        }
+        .modify(comments)?;
+        messages.push(format_message(msg, "Set Genre", &file_name, run));
         tag_modified = true;
     }
     if args.set_year {
-        messages.push(set_year(comments, args.year)?.to_string("Set year", &file_name, run));
+        let msg = TagEditor {
+            strategy: SetYear {
+                year: args.year.to_string(),
+            },
+            field: YEAR,
+        }
+        .modify(comments)?;
+        messages.push(format_message(msg, "Set Year", &file_name, run));
         tag_modified = true;
     }
+
     if args.clean_others {
-        messages.push(clean_others(comments)?.to_string("Remove. junk", &file_name, run));
+        let comment_msg = TagEditor {
+            strategy: Erase,
+            field: COMMENT,
+        }
+        .modify(comments)?;
+        let lyrics_msg = TagEditor {
+            strategy: Erase,
+            field: LYRICS,
+        }
+        .modify(comments)?;
+        messages.push(format_message(comment_msg, "Rem. Comment", &file_name, run));
+        messages.push(format_message(lyrics_msg, "Rem. Lyrics", &file_name, run));
         tag_modified = true;
     }
 
     if args.rename {
-        messages.push(rename(path, comments, run)?.to_string("Rename", &file_name, run));
+        let msg = rename(path, comments, run)?;
+        messages.push(format_message(msg, "Rename", &file_name, run));
     }
 
     if run && tag_modified {
@@ -292,32 +344,4 @@ fn worker(
     }
 
     Ok(messages)
-}
-
-pub fn run(args: &parser::Args, sp: &Arc<Mutex<SpinnerHandle>>) -> Mutex<Vec<String>> {
-    let messages: Mutex<Vec<String>> = Mutex::new(Vec::new());
-
-    let mut entry_iter = WalkDir::new(Path::new(&args.path))
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension() == Some(&ffi::OsString::from("flac")))
-        .peekable();
-
-    while entry_iter.peek().is_some() {
-        entry_iter
-            .by_ref()
-            .take(10) // TODO: add thread param
-            .collect::<Vec<_>>()
-            .par_iter()
-            .for_each(|entry| {
-                let message = match worker(entry, &args, &sp) {
-                    Ok(msg) => msg.join("\n"),
-                    Err(err) => err.to_string().red().to_string(),
-                };
-
-                messages.lock().unwrap().push(message);
-            })
-    }
-
-    messages
 }
