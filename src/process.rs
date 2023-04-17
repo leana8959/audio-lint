@@ -4,7 +4,7 @@ use std::num::ParseIntError;
 use std::path::Path;
 
 use colored::Colorize;
-use metaflac;
+
 use metaflac::block::VorbisComment;
 use regex::Regex;
 use spinner::SpinnerHandle;
@@ -15,26 +15,28 @@ use walkdir::DirEntry;
 
 use crate::parser;
 
-const TRACKNUMBER: &'static str = "TRACKNUMBER";
-const TITLE: &'static str = "TITLE";
-const GENRE: &'static str = "GENRE";
-const YEAR: &'static str = "DATE";
-const COMMENT: &'static str = "COMMENT";
-const LYRICS: &'static str = "LYRICS";
+const TRACKNUMBER: &str = "TRACKNUMBER";
+const TITLE: &str = "TITLE";
+const GENRE: &str = "GENRE";
+const YEAR: &str = "DATE";
+const COMMENT: &str = "COMMENT";
+const LYRICS: &str = "LYRICS";
 
 struct Message {
     old: String,
     new: String,
 }
 
-#[rustfmt::skip]
 fn format_message(msg: Option<Message>, strategy: &str, file_name: &String, run: bool) -> String {
     match msg {
         None => format!("{} (unchanged): {}", strategy, file_name.clone().normal()),
         Some(Message { old, new }) => {
             let new = {
-                if new == "".to_string() { "[EMPTY]".to_string() }
-                else { new }
+                if new == *"" {
+                    "[EMPTY]".to_string()
+                } else {
+                    new
+                }
             };
             format!(
                 "{}: {} {} -> {}",
@@ -96,9 +98,9 @@ where
         .next()
         .ok_or(EditorError::LoadTag(field.to_string()))?;
 
-    let new = strategy.transform(&old)?;
+    let new = strategy.transform(old)?;
 
-    if strategy.changed(&old, &new) {
+    if strategy.changed(old, &new) {
         return Ok(None);
     }
 
@@ -232,7 +234,7 @@ fn rename(
     let new_name = format!(
         "{:0>2} - {}.{}",
         tracknumber,
-        title.replace(":", " ").replace("/", " "),
+        title.replace([':', '/'], " "),
         ext
     );
 
@@ -247,10 +249,10 @@ fn rename(
 
     if run {
         let new_path = parent.join(&new_name);
-        fs::rename(&path, &new_path).unwrap();
+        fs::rename(path, new_path).unwrap();
     }
 
-    return Ok(Some(result));
+    Ok(Some(result))
 }
 
 pub fn process_entry(
