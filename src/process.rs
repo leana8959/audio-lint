@@ -32,7 +32,7 @@ fn format_message(msg: Option<Message>, strategy: &str, file_name: &String, run:
         None => format!("{} (unchanged): {}", strategy, file_name.clone().normal()),
         Some(Message { old, new }) => {
             let new = {
-                if new == *"" {
+                if new.is_empty() {
                     "[EMPTY]".to_string()
                 } else {
                     new
@@ -115,8 +115,8 @@ where
 }
 
 trait Strategy {
-    fn transform(&self, old: &String) -> Result<String, EditorError>;
-    fn changed(&self, old: &String, new: &String) -> bool;
+    fn transform(&self, old: &str) -> Result<String, EditorError>;
+    fn changed(&self, old: &str, new: &str) -> bool;
 }
 
 struct FormatNumber;
@@ -131,60 +131,60 @@ struct SetYear {
 }
 
 impl Strategy for FormatNumber {
-    fn transform(&self, old: &String) -> Result<String, EditorError> {
+    fn transform(&self, old: &str) -> Result<String, EditorError> {
         Ok(old.parse::<u32>()?.to_string())
     }
-    fn changed(&self, old: &String, new: &String) -> bool {
+    fn changed(&self, old: &str, new: &str) -> bool {
         old == new
     }
 }
 
 impl Strategy for FormatText {
-    fn transform(&self, old: &String) -> Result<String, EditorError> {
+    fn transform(&self, old: &str) -> Result<String, EditorError> {
         let re = Regex::new(r"\s{2}").unwrap();
         Ok(re.replace_all(titlecase(old).trim(), " ").to_string())
     }
-    fn changed(&self, old: &String, new: &String) -> bool {
+    fn changed(&self, old: &str, new: &str) -> bool {
         old.nfd().eq(new.nfd())
     }
 }
 
 impl Strategy for FormatYear {
-    fn transform(&self, old: &String) -> Result<String, EditorError> {
+    fn transform(&self, old: &str) -> Result<String, EditorError> {
         Ok(Regex::new(r"(\d{4})")?
             .captures(old)
             .ok_or(EditorError::ParseTag("parse into new date".to_string()))?
             .get(1)
-            .map_or(old.clone(), |s| s.as_str().to_string()))
+            .map_or(old.to_string(), |s| s.as_str().to_string()))
     }
-    fn changed(&self, old: &String, new: &String) -> bool {
+    fn changed(&self, old: &str, new: &str) -> bool {
         old == new
     }
 }
 
 impl Strategy for Erase {
-    fn transform(&self, _old: &String) -> Result<String, EditorError> {
+    fn transform(&self, _old: &str) -> Result<String, EditorError> {
         Ok("".to_string())
     }
-    fn changed(&self, old: &String, _new: &String) -> bool {
-        *old != "".to_string()
+    fn changed(&self, old: &str, _new: &str) -> bool {
+        !old.is_empty()
     }
 }
 
 impl Strategy for SetGenre {
-    fn transform(&self, _old: &String) -> Result<String, EditorError> {
+    fn transform(&self, _old: &str) -> Result<String, EditorError> {
         Ok(self.genre.to_owned())
     }
-    fn changed(&self, old: &String, new: &String) -> bool {
+    fn changed(&self, old: &str, new: &str) -> bool {
         old == new
     }
 }
 
 impl Strategy for SetYear {
-    fn transform(&self, _old: &String) -> Result<String, EditorError> {
+    fn transform(&self, _old: &str) -> Result<String, EditorError> {
         Ok(self.year.to_string())
     }
-    fn changed(&self, old: &String, new: &String) -> bool {
+    fn changed(&self, old: &str, new: &str) -> bool {
         old == new
     }
 }
@@ -289,7 +289,13 @@ pub fn process_entry(
         tag_modified = true;
     }
     if let Some(genre) = &args.set_genre {
-        let msg = edit_tag(comments, GENRE, SetGenre { genre: genre.to_owned() })?;
+        let msg = edit_tag(
+            comments,
+            GENRE,
+            SetGenre {
+                genre: genre.to_owned(),
+            },
+        )?;
         messages.push(format_message(msg, "Set Genre", &file_name, run));
         tag_modified = true;
     }
