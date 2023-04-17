@@ -27,7 +27,7 @@ struct Message {
     new: String,
 }
 
-fn format_message(msg: Option<Message>, strategy: &str, file_name: &String, run: bool) -> String {
+fn format_message(msg: Option<Message>, strategy: &str, file_name: &str, run: bool) -> String {
     match msg {
         None => format!("{} (unchanged): {}", strategy, file_name.clone().normal()),
         Some(Message { old, new }) => {
@@ -50,30 +50,30 @@ fn format_message(msg: Option<Message>, strategy: &str, file_name: &String, run:
 }
 
 #[derive(Debug)]
-pub enum EditorError {
+pub enum ProcessError {
     Loadfile(String),
     LoadTag(String),
     ParseTag(String),
 }
-impl error::Error for EditorError {}
+impl error::Error for ProcessError {}
 
-impl From<ParseIntError> for EditorError {
+impl From<ParseIntError> for ProcessError {
     fn from(value: ParseIntError) -> Self {
         Self::LoadTag(value.to_string())
     }
 }
-impl From<regex::Error> for EditorError {
+impl From<regex::Error> for ProcessError {
     fn from(value: regex::Error) -> Self {
         Self::LoadTag(value.to_string())
     }
 }
-impl From<metaflac::Error> for EditorError {
+impl From<metaflac::Error> for ProcessError {
     fn from(value: metaflac::Error) -> Self {
         Self::Loadfile(value.to_string())
     }
 }
 
-impl fmt::Display for EditorError {
+impl fmt::Display for ProcessError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Loadfile(msg) => write!(f, "Failed to load file: {}", msg),
@@ -87,16 +87,16 @@ fn edit_tag<S>(
     comments: &mut VorbisComment,
     field: &str,
     strategy: S,
-) -> Result<Option<Message>, EditorError>
+) -> Result<Option<Message>, ProcessError>
 where
     S: Strategy,
 {
     let old = comments
         .get(field)
-        .ok_or(EditorError::LoadTag(field.to_string()))?
+        .ok_or(ProcessError::LoadTag(field.to_string()))?
         .iter()
         .next()
-        .ok_or(EditorError::LoadTag(field.to_string()))?;
+        .ok_or(ProcessError::LoadTag(field.to_string()))?;
 
     let new = strategy.transform(old)?;
 
@@ -109,13 +109,13 @@ where
         new: new.to_owned(),
     };
 
-    comments.set(field, vec![new]);
+    comments.remove(field);
 
     Ok(Some(msg))
 }
 
 trait Strategy {
-    fn transform(&self, old: &str) -> Result<String, EditorError>;
+    fn transform(&self, old: &str) -> Result<String, ProcessError>;
     fn changed(&self, old: &str, new: &str) -> bool;
 }
 
@@ -131,7 +131,7 @@ struct SetYear {
 }
 
 impl Strategy for FormatNumber {
-    fn transform(&self, old: &str) -> Result<String, EditorError> {
+    fn transform(&self, old: &str) -> Result<String, ProcessError> {
         Ok(old.parse::<u32>()?.to_string())
     }
     fn changed(&self, old: &str, new: &str) -> bool {
@@ -140,7 +140,7 @@ impl Strategy for FormatNumber {
 }
 
 impl Strategy for FormatText {
-    fn transform(&self, old: &str) -> Result<String, EditorError> {
+    fn transform(&self, old: &str) -> Result<String, ProcessError> {
         let re = Regex::new(r"\s{2}").unwrap();
         Ok(re.replace_all(titlecase(old).trim(), " ").to_string())
     }
@@ -150,10 +150,10 @@ impl Strategy for FormatText {
 }
 
 impl Strategy for FormatYear {
-    fn transform(&self, old: &str) -> Result<String, EditorError> {
+    fn transform(&self, old: &str) -> Result<String, ProcessError> {
         Ok(Regex::new(r"(\d{4})")?
             .captures(old)
-            .ok_or(EditorError::ParseTag("parse into new date".to_string()))?
+            .ok_or(ProcessError::ParseTag("parse into new date".to_string()))?
             .get(1)
             .map_or(old.to_string(), |s| s.as_str().to_string()))
     }
@@ -163,7 +163,7 @@ impl Strategy for FormatYear {
 }
 
 impl Strategy for Erase {
-    fn transform(&self, _old: &str) -> Result<String, EditorError> {
+    fn transform(&self, _old: &str) -> Result<String, ProcessError> {
         Ok("".to_string())
     }
     fn changed(&self, old: &str, _new: &str) -> bool {
@@ -172,7 +172,7 @@ impl Strategy for Erase {
 }
 
 impl Strategy for SetGenre {
-    fn transform(&self, _old: &str) -> Result<String, EditorError> {
+    fn transform(&self, _old: &str) -> Result<String, ProcessError> {
         Ok(self.genre.to_owned())
     }
     fn changed(&self, old: &str, new: &str) -> bool {
@@ -181,7 +181,7 @@ impl Strategy for SetGenre {
 }
 
 impl Strategy for SetYear {
-    fn transform(&self, _old: &str) -> Result<String, EditorError> {
+    fn transform(&self, _old: &str) -> Result<String, ProcessError> {
         Ok(self.year.to_string())
     }
     fn changed(&self, old: &str, new: &str) -> bool {
@@ -193,37 +193,37 @@ fn rename(
     path: &Path,
     comments: &mut VorbisComment,
     run: bool,
-) -> Result<Option<Message>, EditorError> {
+) -> Result<Option<Message>, ProcessError> {
     let old_name = path
         .file_name()
-        .ok_or(EditorError::Loadfile("can't get filename".to_string()))?
+        .ok_or(ProcessError::Loadfile("can't get filename".to_string()))?
         .to_str()
-        .ok_or(EditorError::Loadfile("can't get filename".to_string()))?;
+        .ok_or(ProcessError::Loadfile("can't get filename".to_string()))?;
     let ext = path
         .extension()
-        .ok_or(EditorError::Loadfile(
+        .ok_or(ProcessError::Loadfile(
             "file extension not present".to_string(),
         ))?
         .to_str()
-        .ok_or(EditorError::Loadfile(
+        .ok_or(ProcessError::Loadfile(
             "can't load file extension".to_string(),
         ))?;
-    let parent = path.parent().ok_or(EditorError::Loadfile(
+    let parent = path.parent().ok_or(ProcessError::Loadfile(
         "Parent folder isn't valid".to_string(),
     ))?;
 
     let tracknumber = comments
         .get(TRACKNUMBER)
-        .ok_or(EditorError::LoadTag("load tracknumber".to_string()))?
+        .ok_or(ProcessError::LoadTag("load tracknumber".to_string()))?
         .iter()
         .next()
-        .ok_or(EditorError::LoadTag("load tracknumber".to_string()))?;
+        .ok_or(ProcessError::LoadTag("load tracknumber".to_string()))?;
     let title = comments
         .get(TITLE)
-        .ok_or(EditorError::LoadTag("load title".to_string()))?
+        .ok_or(ProcessError::LoadTag("load title".to_string()))?
         .iter()
         .next()
-        .ok_or(EditorError::LoadTag("load title".to_string()))?;
+        .ok_or(ProcessError::LoadTag("load title".to_string()))?;
 
     let new_name = format!(
         "{:0>2} - {}.{}",
@@ -253,16 +253,15 @@ pub fn process_entry(
     entry: &DirEntry,
     args: &parser::Args,
     sp: &SpinnerHandle,
-) -> Result<Vec<String>, EditorError> {
+) -> Result<Vec<String>, ProcessError> {
     let run = args.run;
 
     let path = entry.path();
     let file_name = path
         .file_name()
-        .ok_or(EditorError::Loadfile("filename".to_string()))?
+        .ok_or(ProcessError::Loadfile("filename".to_string()))?
         .to_str()
-        .ok_or(EditorError::Loadfile("filename".to_string()))?
-        .to_string();
+        .ok_or(ProcessError::Loadfile("filename".to_string()))?;
 
     sp.update(path.to_str().unwrap().to_string());
 
