@@ -59,14 +59,8 @@ pub struct Args {
     pub erase: bool,
 
     #[arg(short = 'g', long = "set-genre", help = "set genre to", group = "mode")]
-    pub set_genre: bool,
-
-    #[arg(short = 'G', long = "genre", help = "specify genre")]
-    pub genre: Option<String>,
+    pub set_genre: Option<String>,
 
     #[arg(long = "set-year", help = "set year to", group = "mode")]
-    pub set_year: bool,
-
-    #[arg(long = "year", help = "specify year")]
-    pub year: Option<u32>,
+    pub set_year: Option<u32>,
 }

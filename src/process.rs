@@ -124,10 +124,10 @@ struct FormatText;
 struct FormatYear;
 struct Erase;
 struct SetGenre {
-    genre: Option<String>,
+    genre: String,
 }
 struct SetYear {
-    year: Option<u32>,
+    year: u32,
 }
 
 impl Strategy for FormatNumber {
@@ -173,10 +173,7 @@ impl Strategy for Erase {
 
 impl Strategy for SetGenre {
     fn transform(&self, _old: &String) -> Result<String, EditorError> {
-        match &self.genre {
-            Some(genre) => Ok(genre.to_owned()),
-            None => Ok("".to_string()),
-        }
+        Ok(self.genre.to_owned())
     }
     fn changed(&self, old: &String, new: &String) -> bool {
         old == new
@@ -185,10 +182,7 @@ impl Strategy for SetGenre {
 
 impl Strategy for SetYear {
     fn transform(&self, _old: &String) -> Result<String, EditorError> {
-        match self.year {
-            Some(year) => Ok(year.to_string()),
-            None => Ok("".to_string()),
-        }
+        Ok(self.year.to_string())
     }
     fn changed(&self, old: &String, new: &String) -> bool {
         old == new
@@ -294,19 +288,13 @@ pub fn process_entry(
         messages.push(format_message(msg, "Norm. Year", &file_name, run));
         tag_modified = true;
     }
-    if args.set_genre {
-        let msg = edit_tag(
-            comments,
-            GENRE,
-            SetGenre {
-                genre: args.genre.clone(),
-            },
-        )?;
+    if let Some(genre) = &args.set_genre {
+        let msg = edit_tag(comments, GENRE, SetGenre { genre: genre.to_owned() })?;
         messages.push(format_message(msg, "Set Genre", &file_name, run));
         tag_modified = true;
     }
-    if args.set_year {
-        let msg = edit_tag(comments, YEAR, SetYear { year: args.year })?;
+    if let Some(year) = args.set_year {
+        let msg = edit_tag(comments, YEAR, SetYear { year })?;
         messages.push(format_message(msg, "Set Year", &file_name, run));
         tag_modified = true;
     }
