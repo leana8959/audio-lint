@@ -29,7 +29,7 @@ struct Message {
 
 fn format_message(msg: Option<Message>, strategy: &str, file_name: &str, run: bool) -> String {
     match msg {
-        None => format!("{} (unchanged): {}", strategy, file_name.clone().normal()),
+        None => format!("{} (unchanged): {}", strategy, file_name.normal()),
         Some(Message { old, new }) => {
             let new = {
                 if new.is_empty() {
@@ -106,7 +106,7 @@ where
 
     let msg = Message {
         old: old.to_owned(),
-        new: new.to_owned(),
+        new,
     };
 
     comments.remove(field);
@@ -274,17 +274,17 @@ pub fn process_entry(
 
     if args.normalize_tracknumber {
         let msg = edit_tag(comments, TRACKNUMBER, FormatNumber)?;
-        messages.push(format_message(msg, "Norm. Numb.", &file_name, run));
+        messages.push(format_message(msg, "Norm. Numb.", file_name, run));
         tag_modified = true;
     }
     if args.normalize_title {
         let msg = edit_tag(comments, TITLE, FormatText)?;
-        messages.push(format_message(msg, "Norm. Title", &file_name, run));
+        messages.push(format_message(msg, "Norm. Title", file_name, run));
         tag_modified = true;
     }
     if args.normalize_year {
         let msg = edit_tag(comments, YEAR, FormatYear)?;
-        messages.push(format_message(msg, "Norm. Year", &file_name, run));
+        messages.push(format_message(msg, "Norm. Year", file_name, run));
         tag_modified = true;
     }
     if let Some(genre) = &args.set_genre {
@@ -295,25 +295,25 @@ pub fn process_entry(
                 genre: genre.to_owned(),
             },
         )?;
-        messages.push(format_message(msg, "Set Genre", &file_name, run));
+        messages.push(format_message(msg, "Set Genre", file_name, run));
         tag_modified = true;
     }
     if let Some(year) = args.set_year {
         let msg = edit_tag(comments, YEAR, SetYear { year })?;
-        messages.push(format_message(msg, "Set Year", &file_name, run));
+        messages.push(format_message(msg, "Set Year", file_name, run));
         tag_modified = true;
     }
 
     if args.rename {
         let msg = rename(path, comments, run)?;
-        messages.push(format_message(msg, "Rename", &file_name, run));
+        messages.push(format_message(msg, "Rename", file_name, run));
     }
 
     if args.erase {
         let comment_msg = edit_tag(comments, COMMENT, Erase)?;
         let lyrics_msg = edit_tag(comments, LYRICS, Erase)?;
-        messages.push(format_message(comment_msg, "Rem. Comment", &file_name, run));
-        messages.push(format_message(lyrics_msg, "Rem. Lyrics", &file_name, run));
+        messages.push(format_message(comment_msg, "Rem. Comment", file_name, run));
+        messages.push(format_message(lyrics_msg, "Rem. Lyrics", file_name, run));
         tag_modified = true;
     }
 
