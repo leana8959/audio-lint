@@ -39,11 +39,8 @@ fn format_message(msg: Option<Message>, strategy: &str, file_name: &str, run: bo
                 }
             };
             format!(
-                "{}: {} {} -> {}",
-                strategy,
-                file_name,
-                old,
-                if !run { new.yellow() } else { new.green() },
+                "{strategy}: {file_name} {old} -> {}",
+                if run { new.green() } else { new.yellow() }
             )
         }
     }
@@ -53,7 +50,6 @@ fn format_message(msg: Option<Message>, strategy: &str, file_name: &str, run: bo
 pub enum ProcessError {
     Loadfile(String),
     LoadTag(String),
-    ParseTag(String),
 }
 impl error::Error for ProcessError {}
 
@@ -77,25 +73,19 @@ impl fmt::Display for ProcessError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Loadfile(msg) => write!(f, "Failed to load file: {}", msg),
-            Self::ParseTag(msg) => write!(f, "Failed to parse: {}", msg),
             Self::LoadTag(msg) => write!(f, "Tag doesn't exist: {}", msg),
         }
     }
 }
 
-fn edit_tag<S>(
+fn edit_tag<S: Strategy>(
     comments: &mut VorbisComment,
     field: &str,
     strategy: S,
-) -> Result<Option<Message>, ProcessError>
-where
-    S: Strategy,
-{
+) -> Result<Option<Message>, ProcessError> {
     let old = comments
         .get(field)
-        .ok_or(ProcessError::LoadTag(field.to_string()))?
-        .iter()
-        .next()
+        .and_then(|comments| comments.get(0))
         .ok_or(ProcessError::LoadTag(field.to_string()))?;
 
     let new = strategy.transform(old)?;
@@ -153,8 +143,7 @@ impl Strategy for FormatYear {
     fn transform(&self, old: &str) -> Result<String, ProcessError> {
         Ok(Regex::new(r"(\d{4})")?
             .captures(old)
-            .ok_or(ProcessError::ParseTag("parse into new date".to_string()))?
-            .get(1)
+            .and_then(|group| group.get(1))
             .map_or(old.to_string(), |s| s.as_str().to_string()))
     }
     fn changed(&self, old: &str, new: &str) -> bool {
@@ -196,15 +185,11 @@ fn rename(
 ) -> Result<Option<Message>, ProcessError> {
     let old_name = path
         .file_name()
-        .ok_or(ProcessError::Loadfile("can't get filename".to_string()))?
-        .to_str()
+        .and_then(|comments| comments.to_str())
         .ok_or(ProcessError::Loadfile("can't get filename".to_string()))?;
     let ext = path
         .extension()
-        .ok_or(ProcessError::Loadfile(
-            "file extension not present".to_string(),
-        ))?
-        .to_str()
+        .and_then(|comments| comments.to_str())
         .ok_or(ProcessError::Loadfile(
             "can't load file extension".to_string(),
         ))?;
@@ -214,15 +199,11 @@ fn rename(
 
     let tracknumber = comments
         .get(TRACKNUMBER)
-        .ok_or(ProcessError::LoadTag("load tracknumber".to_string()))?
-        .iter()
-        .next()
+        .and_then(|comments| comments.get(0))
         .ok_or(ProcessError::LoadTag("load tracknumber".to_string()))?;
     let title = comments
         .get(TITLE)
-        .ok_or(ProcessError::LoadTag("load title".to_string()))?
-        .iter()
-        .next()
+        .and_then(|comments| comments.get(0))
         .ok_or(ProcessError::LoadTag("load title".to_string()))?;
 
     let new_name = format!(
@@ -259,8 +240,7 @@ pub fn process_entry(
     let path = entry.path();
     let file_name = path
         .file_name()
-        .ok_or(ProcessError::Loadfile("filename".to_string()))?
-        .to_str()
+        .and_then(|name| name.to_str())
         .ok_or(ProcessError::Loadfile("filename".to_string()))?;
 
     sp.update(path.to_str().unwrap().to_string());
