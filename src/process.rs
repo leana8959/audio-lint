@@ -1,14 +1,12 @@
-use std::fmt;
 use std::fs;
-use std::num::ParseIntError;
 use std::path::Path;
 
+use anyhow::anyhow;
+use anyhow::Result;
 use colored::Colorize;
-
 use metaflac::block::VorbisComment;
 use regex::Regex;
 use spinner::SpinnerHandle;
-use std::error;
 use titlecase::titlecase;
 use unic_normal::StrNormalForm;
 use walkdir::DirEntry;
@@ -46,47 +44,15 @@ fn format_message(msg: Option<Message>, strategy: &str, file_name: &str, run: bo
     }
 }
 
-#[derive(Debug)]
-pub enum ProcessError {
-    Loadfile(String),
-    LoadTag(String),
-}
-impl error::Error for ProcessError {}
-
-impl From<ParseIntError> for ProcessError {
-    fn from(value: ParseIntError) -> Self {
-        Self::LoadTag(value.to_string())
-    }
-}
-impl From<regex::Error> for ProcessError {
-    fn from(value: regex::Error) -> Self {
-        Self::LoadTag(value.to_string())
-    }
-}
-impl From<metaflac::Error> for ProcessError {
-    fn from(value: metaflac::Error) -> Self {
-        Self::Loadfile(value.to_string())
-    }
-}
-
-impl fmt::Display for ProcessError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Loadfile(msg) => write!(f, "Failed to load file: {}", msg),
-            Self::LoadTag(msg) => write!(f, "Tag doesn't exist: {}", msg),
-        }
-    }
-}
-
 fn edit_tag<S: Strategy>(
     comments: &mut VorbisComment,
     field: &str,
     strategy: S,
-) -> Result<Option<Message>, ProcessError> {
+) -> Result<Option<Message>, anyhow::Error> {
     let old = comments
         .get(field)
         .and_then(|comments| comments.get(0))
-        .ok_or(ProcessError::LoadTag(field.to_string()))?;
+        .ok_or(anyhow!("failed load tag: {}", field))?;
 
     let new = strategy.transform(old)?;
 
@@ -96,16 +62,16 @@ fn edit_tag<S: Strategy>(
 
     let msg = Message {
         old: old.to_owned(),
-        new,
+        new: new.to_owned(),
     };
 
-    comments.remove(field);
+    comments.set(field, vec![new]);
 
     Ok(Some(msg))
 }
 
 trait Strategy {
-    fn transform(&self, old: &str) -> Result<String, ProcessError>;
+    fn transform(&self, old: &str) -> Result<String, anyhow::Error>;
     fn changed(&self, old: &str, new: &str) -> bool;
 }
 
@@ -121,7 +87,7 @@ struct SetYear {
 }
 
 impl Strategy for FormatNumber {
-    fn transform(&self, old: &str) -> Result<String, ProcessError> {
+    fn transform(&self, old: &str) -> Result<String, anyhow::Error> {
         Ok(old.parse::<u32>()?.to_string())
     }
     fn changed(&self, old: &str, new: &str) -> bool {
@@ -130,7 +96,7 @@ impl Strategy for FormatNumber {
 }
 
 impl Strategy for FormatText {
-    fn transform(&self, old: &str) -> Result<String, ProcessError> {
+    fn transform(&self, old: &str) -> Result<String, anyhow::Error> {
         let re = Regex::new(r"\s{2}").unwrap();
         Ok(re.replace_all(titlecase(old).trim(), " ").to_string())
     }
@@ -140,7 +106,7 @@ impl Strategy for FormatText {
 }
 
 impl Strategy for FormatYear {
-    fn transform(&self, old: &str) -> Result<String, ProcessError> {
+    fn transform(&self, old: &str) -> Result<String, anyhow::Error> {
         Ok(Regex::new(r"(\d{4})")?
             .captures(old)
             .and_then(|group| group.get(1))
@@ -152,7 +118,7 @@ impl Strategy for FormatYear {
 }
 
 impl Strategy for Erase {
-    fn transform(&self, _old: &str) -> Result<String, ProcessError> {
+    fn transform(&self, _old: &str) -> Result<String, anyhow::Error> {
         Ok("".to_string())
     }
     fn changed(&self, old: &str, _new: &str) -> bool {
@@ -161,7 +127,7 @@ impl Strategy for Erase {
 }
 
 impl Strategy for SetGenre {
-    fn transform(&self, _old: &str) -> Result<String, ProcessError> {
+    fn transform(&self, _old: &str) -> Result<String, anyhow::Error> {
         Ok(self.genre.to_owned())
     }
     fn changed(&self, old: &str, new: &str) -> bool {
@@ -170,7 +136,7 @@ impl Strategy for SetGenre {
 }
 
 impl Strategy for SetYear {
-    fn transform(&self, _old: &str) -> Result<String, ProcessError> {
+    fn transform(&self, _old: &str) -> Result<String, anyhow::Error> {
         Ok(self.year.to_string())
     }
     fn changed(&self, old: &str, new: &str) -> bool {
@@ -182,29 +148,27 @@ fn rename(
     path: &Path,
     comments: &mut VorbisComment,
     run: bool,
-) -> Result<Option<Message>, ProcessError> {
+) -> Result<Option<Message>, anyhow::Error> {
     let old_name = path
         .file_name()
         .and_then(|comments| comments.to_str())
-        .ok_or(ProcessError::Loadfile("can't get filename".to_string()))?;
+        .ok_or(anyhow!("can't get filename for {:?}", path))?;
     let ext = path
         .extension()
         .and_then(|comments| comments.to_str())
-        .ok_or(ProcessError::Loadfile(
-            "can't load file extension".to_string(),
-        ))?;
-    let parent = path.parent().ok_or(ProcessError::Loadfile(
-        "Parent folder isn't valid".to_string(),
-    ))?;
+        .ok_or(anyhow!("can't load file extension for {:?}", path))?;
+    let parent = path
+        .parent()
+        .ok_or(anyhow!("can't find parent path for {:?}", path))?;
 
     let tracknumber = comments
         .get(TRACKNUMBER)
         .and_then(|comments| comments.get(0))
-        .ok_or(ProcessError::LoadTag("load tracknumber".to_string()))?;
+        .ok_or(anyhow!("can't load tracknumber for {:?}", path))?;
     let title = comments
         .get(TITLE)
         .and_then(|comments| comments.get(0))
-        .ok_or(ProcessError::LoadTag("load title".to_string()))?;
+        .ok_or(anyhow!("can't load title for {:?}", path))?;
 
     let new_name = format!(
         "{:0>2} - {}.{}",
@@ -234,14 +198,14 @@ pub fn process_entry(
     entry: &DirEntry,
     args: &parser::Args,
     sp: &SpinnerHandle,
-) -> Result<Vec<String>, ProcessError> {
+) -> Result<Vec<String>, anyhow::Error> {
     let run = args.run;
 
     let path = entry.path();
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or(ProcessError::Loadfile("filename".to_string()))?;
+        .ok_or(anyhow!("can't load file {:?}", entry))?;
 
     sp.update(path.to_str().unwrap().to_string());
 
@@ -290,11 +254,16 @@ pub fn process_entry(
     }
 
     if args.erase {
-        let comment_msg = edit_tag(comments, COMMENT, Erase)?;
-        let lyrics_msg = edit_tag(comments, LYRICS, Erase)?;
-        messages.push(format_message(comment_msg, "Rem. Comment", file_name, run));
-        messages.push(format_message(lyrics_msg, "Rem. Lyrics", file_name, run));
-        tag_modified = true;
+        let comment_msg = edit_tag(comments, COMMENT, Erase);
+        let lyrics_msg = edit_tag(comments, LYRICS, Erase);
+        if let Ok(msg) = comment_msg {
+            messages.push(format_message(msg, "Rem. Comment", file_name, run));
+            tag_modified = true;
+        }
+        if let Ok(msg) = lyrics_msg {
+            messages.push(format_message(msg, "Rem. Comment", file_name, run));
+            tag_modified = true;
+        }
     }
 
     if run && tag_modified {
