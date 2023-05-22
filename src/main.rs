@@ -18,12 +18,10 @@ fn main() {
         .spinner(vec!["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
         .start();
 
-    let files_iter = WalkDir::new(Path::new(&args.path))
+    let messages = WalkDir::new(Path::new(&args.path))
         .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension() == Some(&ffi::OsString::from("flac")));
-
-    let messages = files_iter
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().extension() == Some(&ffi::OsString::from("flac")))
         .map(|entry| match process_entry(&entry, &args, &sp) {
             Ok(msg) => msg.join("\n"),
             Err(err) => err.to_string().red().to_string(),
