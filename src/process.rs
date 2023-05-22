@@ -24,19 +24,36 @@ struct BeforeAfter {
     new: String,
 }
 
-fn format_message(msg: Option<BeforeAfter>, strategy: &str, file_name: &str, run: bool) -> String {
+// TODO: Take a result
+fn format_message(
+    msg: Result<Option<BeforeAfter>>,
+    strategy: &str,
+    file_name: &str,
+    run: bool,
+) -> String {
     match msg {
-        None => format!("{} (unchanged): {}", strategy, file_name),
-        Some(BeforeAfter { old, new }) => {
-            let new = if new.is_empty() {
-                "[EMPTY]".to_string()
-            } else {
-                new
-            };
+        Ok(msg) => match msg {
+            None => format!("{strategy} (unchanged): {file_name}"),
+            Some(BeforeAfter { old, new }) => {
+                let new = if new.is_empty() {
+                    "[EMPTY]".to_string()
+                } else {
+                    new
+                };
 
+                format!(
+                    "{strategy}: {file_name} {old} -> {}",
+                    if run { new.green() } else { new.yellow() }
+                )
+            }
+        },
+
+        Err(e) => {
             format!(
-                "{strategy}: {file_name} {old} -> {}",
-                if run { new.green() } else { new.yellow() }
+                "{} {} (failed due to): {}",
+                file_name.red(),
+                strategy.red(),
+                e.to_string().underline()
             )
         }
     }
@@ -218,20 +235,28 @@ pub fn process_entry(
 
     let mut tag_modified = false;
 
+    // FIXME: don't backward propagate the error.
     if args.normalize_tracknumber {
-        let msg = edit_tag(comments, TRACKNUMBER, FormatNumber)?;
+        let msg = edit_tag(comments, TRACKNUMBER, FormatNumber);
+        if msg.is_ok() {
+            tag_modified = true
+        };
+
         messages.push(format_message(msg, "Norm. Numb.", file_name, run));
-        tag_modified = true;
     }
     if args.normalize_title {
-        let msg = edit_tag(comments, TITLE, FormatText)?;
+        let msg = edit_tag(comments, TITLE, FormatText);
+        if msg.is_ok() {
+            tag_modified = true
+        };
         messages.push(format_message(msg, "Norm. Title", file_name, run));
-        tag_modified = true;
     }
     if args.normalize_year {
-        let msg = edit_tag(comments, YEAR, FormatYear)?;
+        let msg = edit_tag(comments, YEAR, FormatYear);
+        if msg.is_ok() {
+            tag_modified = true
+        };
         messages.push(format_message(msg, "Norm. Year", file_name, run));
-        tag_modified = true;
     }
     if let Some(genre) = &args.set_genre {
         let msg = edit_tag(
@@ -240,32 +265,35 @@ pub fn process_entry(
             SetGenre {
                 genre: genre.to_owned(),
             },
-        )?;
+        );
+        if msg.is_ok() {
+            tag_modified = true
+        };
         messages.push(format_message(msg, "Set Genre", file_name, run));
-        tag_modified = true;
     }
     if let Some(year) = args.set_year {
-        let msg = edit_tag(comments, YEAR, SetYear { year })?;
+        let msg = edit_tag(comments, YEAR, SetYear { year });
+        if msg.is_ok() {
+            tag_modified = true
+        };
         messages.push(format_message(msg, "Set Year", file_name, run));
-        tag_modified = true;
     }
 
     // Special modes
     if args.rename {
-        let msg = rename(path, comments, run)?;
+        let msg = rename(path, comments, run);
         messages.push(format_message(msg, "Rename", file_name, run));
     }
     if args.erase {
         let comment_msg = edit_tag(comments, COMMENT, Erase);
         let lyrics_msg = edit_tag(comments, LYRICS, Erase);
-        if let Ok(msg) = comment_msg {
-            messages.push(format_message(msg, "Rem. Comment", file_name, run));
+
+        if comment_msg.is_ok() || lyrics_msg.is_ok() {
             tag_modified = true;
         }
-        if let Ok(msg) = lyrics_msg {
-            messages.push(format_message(msg, "Rem. Comment", file_name, run));
-            tag_modified = true;
-        }
+
+        messages.push(format_message(comment_msg, "Rem. Comment", file_name, run));
+        messages.push(format_message(lyrics_msg, "Rem. Comment", file_name, run));
     }
 
     if run && tag_modified {
