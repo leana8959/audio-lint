@@ -1,17 +1,15 @@
 mod parser;
 mod process;
 
-use std::ffi;
-use std::path::Path;
-
+use crate::parser::Args;
+use crate::process::process_entry;
 use clap::Parser;
 use colored::Colorize;
 use pager::Pager;
 use spinner::SpinnerBuilder;
+use std::ffi;
+use std::path::Path;
 use walkdir::WalkDir;
-
-use parser::Args;
-use process::process_entry;
 
 fn main() {
     let args = Args::parse();

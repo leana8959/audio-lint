@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use crate::parser;
 use anyhow::anyhow;
 use anyhow::Result;
 use colored::Colorize;
@@ -10,8 +11,6 @@ use spinner::SpinnerHandle;
 use titlecase::titlecase;
 use unic_normal::StrNormalForm;
 use walkdir::DirEntry;
-
-use crate::parser;
 
 const TRACKNUMBER: &str = "TRACKNUMBER";
 const TITLE: &str = "TITLE";
