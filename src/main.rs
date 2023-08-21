@@ -5,7 +5,6 @@ use crate::parser::Args;
 use crate::process::process_entry;
 use clap::Parser;
 use colored::Colorize;
-use pager::Pager;
 use spinner::SpinnerBuilder;
 use std::ffi;
 use std::path::Path;
@@ -32,8 +31,5 @@ fn main() {
     sp.message("Done!".to_string());
     sp.close();
 
-    if !args.quiet {
-        Pager::with_pager("less -r").setup();
-        println!("{}", messages);
-    }
+    println!("{}", messages);
 }

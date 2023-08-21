@@ -35,10 +35,17 @@ fn create_message(msg: Result<Change>, strategy: &str, file_name: &str, run: boo
     match msg {
         Ok(msg) => match msg {
             Unchanged => format!("{strategy}: {}", file_name.dimmed()),
-            Cleared => format!("!{strategy}: {}", file_name.strikethrough()),
+            Cleared => {
+                let file_name = if run {
+                    file_name.green()
+                } else {
+                    file_name.yellow()
+                };
+                format!("{strategy}: {}", file_name.strikethrough())
+            }
             Changed(BeforeAfter { old, new }) => {
                 let new = if run { new.green() } else { new.yellow() };
-                format!("{strategy}: {file_name} {old} -> {new}")
+                format!(r#"{strategy}: "{new}" (was "{old})""#)
             }
         },
 
@@ -270,7 +277,7 @@ pub fn process_entry(
         }
 
         messages.push(create_message(comment_msg, "Clr. Comment", file_name, run));
-        messages.push(create_message(lyrics_msg, "Clr. Comment", file_name, run));
+        messages.push(create_message(lyrics_msg, "Clr. Lyrics", file_name, run));
     }
 
     if run && tag_modified {
