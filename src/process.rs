@@ -7,7 +7,6 @@ use anyhow::Result;
 use colored::Colorize;
 use metaflac::block::VorbisComment;
 use regex::Regex;
-use spinner::SpinnerHandle;
 use titlecase::titlecase;
 use unic_normal::StrNormalForm;
 use walkdir::DirEntry;
@@ -203,7 +202,6 @@ fn rename(path: &Path, comments: &mut VorbisComment, run: bool) -> Result<Change
 pub fn process_entry(
     entry: &DirEntry,
     args: &parser::Args,
-    sp: &SpinnerHandle,
 ) -> Result<Vec<String>, anyhow::Error> {
     let run = args.run;
 
@@ -212,12 +210,6 @@ pub fn process_entry(
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or(anyhow!("can't load file {:?}", entry))?;
-
-    sp.update(
-        path.to_str()
-            .ok_or(anyhow!("couldn't convert path"))?
-            .to_string(),
-    );
 
     let mut messages: Vec<String> = Vec::new();
 
