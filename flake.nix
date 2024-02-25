@@ -13,21 +13,31 @@
   }:
     utils.lib.eachDefaultSystem (system: let
       pkgs = import nixpkgs {inherit system;};
+      inherit (pkgs) lib;
       naersk-lib = pkgs.callPackage naersk {};
     in {
-      defaultPackage = naersk-lib.buildPackage ./.;
+      packages.default = naersk-lib.buildPackage ./.;
+
       formatter = pkgs.alejandra;
-      devShell = with pkgs;
-        mkShell {
-          buildInputs = [
-            cargo
-            rustc
-            rustfmt
-            rust-analyzer
-            pre-commit
-            rustPackages.clippy
-          ];
-          RUST_SRC_PATH = rustPlatform.rustLibSrc;
-        };
+
+      devShell = pkgs.mkShell {
+        buildInputs = with pkgs; [
+          cargo
+          rustc
+          rustfmt
+          rust-analyzer
+          pre-commit
+          rustPackages.clippy
+        ];
+
+        nativeBuildInputs =
+          lib.optionals pkgs.stdenv.isDarwin
+          (with pkgs.darwin; [
+            libiconv
+            apple_sdk.frameworks.Foundation
+          ]);
+
+        RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
+      };
     });
 }
