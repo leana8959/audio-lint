@@ -17,7 +17,13 @@ fn main() {
     let messages = WalkDir::new(Path::new(&args.path))
         .into_iter()
         .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.path().extension() == Some(&ffi::OsString::from("flac")))
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .map(|ext| ext == ffi::OsString::from("flac"))
+                .unwrap_or(false)
+        })
         .map(|entry| match process_entry(&entry, &args) {
             Ok(msg) => msg.join("\n"),
             Err(err) => err.to_string().red().to_string(),
